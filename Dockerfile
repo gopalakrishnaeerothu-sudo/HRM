@@ -26,6 +26,11 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# `public/` is optional in Next and this repo ships no static assets, but the
+# runtime stage copies it unconditionally. Create it so that COPY cannot fail;
+# this is a no-op once real assets are added.
+RUN mkdir -p public
+
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV BUILD_STANDALONE=true
 # A syntactically valid placeholder: the build never connects, but env
@@ -62,7 +67,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/prisma ./node_module
 USER nextjs
 EXPOSE 3000
 
+# Read the port at runtime: a platform that injects its own PORT (Railway does)
+# makes the server listen somewhere other than the 3000 defaulted above.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://localhost:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "server.js"]
