@@ -1,0 +1,24 @@
+# Normalise line endings in the repository, and keep them LF in the working
+# tree for files whose bytes are meaningful.
+*               text=auto
+
+# Migrations are checksummed. The runner normalises line endings before
+# hashing, so a CRLF checkout is no longer a false drift alarm — but keeping
+# them LF on disk means the file a reviewer reads is byte-identical to the one
+# that ran in production.
+*.sql           text eol=lf
+
+# Shell scripts are executed; CRLF makes them fail with an obscure
+# "bad interpreter" error.
+*.sh            text eol=lf
+
+# Binary assets must never be transformed.
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.webp          binary
+*.ico           binary
+*.woff          binary
+*.woff2         binary
+*.pdf           binary

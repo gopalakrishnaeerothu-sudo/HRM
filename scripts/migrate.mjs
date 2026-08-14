@@ -26,6 +26,15 @@
 
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
+
+/**
+ * Reduce a migration to the form its checksum is taken over: CRLF and CR
+ * collapsed to LF, trailing whitespace at end of file removed. Two checkouts
+ * of the same commit on different platforms must produce the same hash.
+ */
+function normaliseForChecksum(sql) {
+  return sql.replace(/\r\n?/g, "\n").replace(/\s+$/, "");
+}
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -102,7 +111,13 @@ function readMigrations() {
       version: match[1],
       name: match[2],
       sql,
-      checksum: createHash("sha256").update(sql).digest("hex"),
+      // Hash the CONTENT, not the bytes. Git rewrites LF to CRLF on checkout
+      // under core.autocrlf, so hashing raw bytes makes every migration look
+      // modified on a Windows clone — a false alarm that trains people to
+      // ignore the one warning that matters. Normalising line endings and the
+      // trailing newline leaves the check sensitive to what it is actually
+      // guarding: a changed statement.
+      checksum: createHash("sha256").update(normaliseForChecksum(sql)).digest("hex"),
     };
   });
 }
