@@ -192,4 +192,29 @@ export function sortDirection(value: string | undefined): "ASC" | "DESC" {
   return value?.toLowerCase() === "desc" ? "DESC" : "ASC";
 }
 
+/**
+ * Build a `LIKE`/`ILIKE` pattern for a substring search.
+ *
+ * Parameterising a value protects against SQL injection — it can never become
+ * SQL. It does NOT stop `%` and `_` inside that value from being interpreted
+ * as wildcards by `LIKE` itself, because at that point they are part of the
+ * pattern, not part of the statement.
+ *
+ * Left alone, a user typing `%` matches every row, and `_` matches any single
+ * character. That is not a security hole, but it is wrong: the search box
+ * should look for the characters someone typed.
+ *
+ * The metacharacters are therefore escaped with a backslash, which callers
+ * pair with `ESCAPE '\'` on the comparison.
+ */
+export function likePattern(term: string): string {
+  const escaped = term
+    // Backslash first, or it would double-escape the ones added below.
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_");
+
+  return `%${escaped}%`;
+}
+
 export type { PoolClient };
