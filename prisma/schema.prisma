@@ -1,0 +1,928 @@
+// TaskFlow HR — multi-tenant HRM + Task + Attendance + Geofencing platform.
+//
+// Tenancy rule: every tenant-owned table carries `organizationId`, and every
+// natural key is unique *within* an organization (never globally). Data access
+// goes through src/server/repositories/*, which always scopes by tenant. See
+// docs/ARCHITECTURE.md for the full model.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum OrganizationPlan {
+  FREE
+  STARTER
+  GROWTH
+  ENTERPRISE
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  HR
+  MANAGER
+  EMPLOYEE
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  DISABLED
+}
+
+/// How a user's identity was established. Kept on the user so that a real
+/// auth provider can be attached later without a schema migration.
+enum AuthProvider {
+  DEV
+  PASSWORD
+  OTP
+  GOOGLE
+  MICROSOFT
+  SSO
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+  ON_LEAVE
+  SUSPENDED
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERN
+  CONSULTANT
+}
+
+enum OfficeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  HALF_DAY
+  ON_LEAVE
+  HOLIDAY
+  WEEKEND
+}
+
+enum AttendanceEventType {
+  CHECK_IN
+  CHECK_OUT
+  BREAK_START
+  BREAK_END
+}
+
+/// Result of the server-side geofence evaluation for a single event.
+enum LocationVerification {
+  VERIFIED
+  OUTSIDE_GEOFENCE
+  LOW_ACCURACY
+  NO_LOCATION
+  SUSPECTED_SPOOF
+  MANUAL_OVERRIDE
+}
+
+enum AttendanceSource {
+  WEB
+  MOBILE
+  KIOSK
+  MANUAL
+  SYSTEM
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  IN_REVIEW
+  COMPLETED
+  BLOCKED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskActivityType {
+  CREATED
+  UPDATED
+  STATUS_CHANGED
+  PRIORITY_CHANGED
+  ASSIGNED
+  UNASSIGNED
+  PROGRESS_UPDATED
+  COMMENTED
+  ATTACHMENT_ADDED
+  SUBTASK_ADDED
+  SUBTASK_COMPLETED
+  DUE_DATE_CHANGED
+  COMPLETED
+  REOPENED
+}
+
+enum LeaveType {
+  CASUAL
+  SICK
+  EARNED
+  UNPAID
+  MATERNITY
+  PATERNITY
+  COMP_OFF
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum NotificationType {
+  TASK_ASSIGNED
+  TASK_DUE_SOON
+  TASK_OVERDUE
+  TASK_COMPLETED
+  TASK_COMMENT
+  ATTENDANCE_REMINDER
+  LATE_ARRIVAL
+  MISSED_CHECKOUT
+  LEAVE_REQUESTED
+  LEAVE_APPROVED
+  LEAVE_REJECTED
+  ANNOUNCEMENT
+  GEOFENCE_ALERT
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  PUSH
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  PERMISSION_CHANGE
+  GEOFENCE_CHANGE
+  ATTENDANCE_OVERRIDE
+  EXPORT
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id        String           @id @default(uuid()) @db.Uuid
+  /// URL-safe tenant key, e.g. "acme-technologies".
+  slug      String           @unique
+  name      String
+  legalName String?
+  logoUrl   String?
+  plan      OrganizationPlan @default(GROWTH)
+
+  timezone String @default("Asia/Kolkata")
+  currency String @default("INR")
+  locale   String @default("en-IN")
+
+  // Organisation-wide defaults. Offices may override working hours.
+  workdayStartMinutes Int   @default(540) // 09:00 — minutes from midnight, office-local
+  workdayEndMinutes   Int   @default(1080) // 18:00
+  /// Minutes after workday start before an arrival counts as late.
+  gracePeriodMinutes  Int   @default(15)
+  /// Hours required for a full day; below half of this is a half day.
+  fullDayHours        Float @default(8)
+  halfDayHours        Float @default(4)
+  /// ISO weekday numbers (1=Mon … 7=Sun) treated as weekends.
+  weekendDays         Int[] @default([6, 7])
+
+  /// Reject a check-in whose GPS accuracy radius exceeds this many metres.
+  maxAccuracyMeters      Int     @default(100)
+  /// Flag events implying travel faster than this between consecutive pings.
+  maxTravelSpeedKmh      Int     @default(900)
+  /// When false, an out-of-geofence check-in is recorded but flagged instead
+  /// of being rejected outright.
+  enforceGeofence        Boolean @default(true)
+  allowManualOverride    Boolean @default(true)
+  requireCheckoutLocation Boolean @default(false)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  users             User[]
+  employees         Employee[]
+  departments       Department[]
+  teams             Team[]
+  offices           Office[]
+  attendanceRecords AttendanceRecord[]
+  attendanceEvents  AttendanceEvent[]
+  breakRecords      BreakRecord[]
+  tasks             Task[]
+  taskComments      TaskComment[]
+  taskAttachments   TaskAttachment[]
+  taskActivities    TaskActivity[]
+  leaves            Leave[]
+  holidays          Holiday[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  sessions          Session[]
+  rolePermissions   RolePermission[]
+
+  @@index([deletedAt])
+  @@map("organizations")
+}
+
+// ---------------------------------------------------------------------------
+// Identity & access
+// ---------------------------------------------------------------------------
+
+/// Authentication identity. Deliberately free of provider-specific columns
+/// beyond `provider`/`providerAccountId` so a real IdP can be plugged in
+/// without touching business tables. No password hash is stored yet — the
+/// dev auth adapter never authenticates, it only impersonates seeded users.
+model User {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  email         String
+  emailVerified DateTime?
+  phone         String?
+  name          String
+  avatarUrl     String?
+  role          UserRole     @default(EMPLOYEE)
+  status        UserStatus   @default(ACTIVE)
+  provider      AuthProvider @default(DEV)
+  /// Stable subject id from the external identity provider, when there is one.
+  providerAccountId String?
+
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  employee      Employee?
+  sessions      Session[]
+  auditLogs     AuditLog[]
+  notifications Notification[]
+
+  @@unique([organizationId, email])
+  @@unique([provider, providerAccountId])
+  @@index([organizationId, role])
+  @@index([organizationId, status])
+  @@map("users")
+}
+
+model Session {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String       @db.Uuid
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the session token. The raw token is never persisted.
+  tokenHash String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId, expiresAt])
+  @@index([organizationId])
+  @@map("sessions")
+}
+
+/// Catalogue of capabilities, e.g. "employee:create", "attendance:override".
+/// Roles map to permissions in code (src/server/auth/permissions.ts); this
+/// table stores *per-tenant overrides* on top of those defaults.
+model Permission {
+  id          String  @id @default(uuid()) @db.Uuid
+  key         String  @unique
+  label       String
+  description String?
+  category    String
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           UserRole
+  permissionId   String       @db.Uuid
+  permission     Permission   @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  /// true = grant on top of defaults, false = explicit revoke.
+  granted        Boolean      @default(true)
+
+  createdAt DateTime @default(now())
+
+  @@unique([organizationId, role, permissionId])
+  @@index([organizationId, role])
+  @@map("role_permissions")
+}
+
+// ---------------------------------------------------------------------------
+// Org structure
+// ---------------------------------------------------------------------------
+
+model Department {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name        String
+  code        String
+  description String?
+  /// Hex accent used by charts and badges for this department.
+  color       String  @default("#6366f1")
+  headId      String? @db.Uuid
+  head        Employee? @relation("DepartmentHead", fields: [headId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  employees Employee[] @relation("EmployeeDepartment")
+  teams     Team[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, deletedAt])
+  @@map("departments")
+}
+
+model Employee {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Human-facing staff number, unique per tenant, e.g. "ACME-0042".
+  employeeCode String
+  userId       String? @unique @db.Uuid
+  user         User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  firstName   String
+  lastName    String
+  email       String
+  phone       String?
+  avatarUrl   String?
+  designation String
+  bio         String?
+
+  departmentId String?     @db.Uuid
+  department   Department? @relation("EmployeeDepartment", fields: [departmentId], references: [id], onDelete: SetNull)
+
+  managerId String?    @db.Uuid
+  manager   Employee?  @relation("EmployeeReports", fields: [managerId], references: [id], onDelete: SetNull)
+  reports   Employee[] @relation("EmployeeReports")
+
+  primaryOfficeId String? @db.Uuid
+  primaryOffice   Office? @relation("EmployeePrimaryOffice", fields: [primaryOfficeId], references: [id], onDelete: SetNull)
+
+  employmentType EmploymentType @default(FULL_TIME)
+  status         EmployeeStatus @default(ACTIVE)
+  joinedAt       DateTime
+  exitedAt       DateTime?
+
+  /// Personal override of the org working window, in office-local minutes.
+  shiftStartMinutes Int?
+  shiftEndMinutes   Int?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  headOfDepartments Department[]      @relation("DepartmentHead")
+  managedTeams      Team[]            @relation("TeamManager")
+  teamMemberships   TeamMember[]
+  officeAccess      EmployeeOffice[]
+  attendanceRecords AttendanceRecord[]
+  attendanceEvents  AttendanceEvent[]
+  breakRecords      BreakRecord[]
+  createdTasks      Task[]            @relation("TaskCreator")
+  taskAssignments   TaskAssignee[]
+  taskComments      TaskComment[]
+  taskAttachments   TaskAttachment[]
+  taskActivities    TaskActivity[]
+  leaves            Leave[]           @relation("LeaveEmployee")
+  reviewedLeaves    Leave[]           @relation("LeaveReviewer")
+
+  @@unique([organizationId, employeeCode])
+  @@unique([organizationId, email])
+  @@index([organizationId, status, deletedAt])
+  @@index([organizationId, departmentId])
+  @@index([organizationId, managerId])
+  @@index([organizationId, primaryOfficeId])
+  @@map("employees")
+}
+
+model Team {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name        String
+  slug        String
+  description String?
+  color       String  @default("#8b5cf6")
+
+  departmentId String?     @db.Uuid
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  managerId String?   @db.Uuid
+  manager   Employee? @relation("TeamManager", fields: [managerId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  members TeamMember[]
+  tasks   Task[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, deletedAt])
+  @@map("teams")
+}
+
+model TeamMember {
+  id         String   @id @default(uuid()) @db.Uuid
+  teamId     String   @db.Uuid
+  team       Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  employeeId String   @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  /// Free-form role within the team, e.g. "Tech Lead".
+  roleLabel  String?
+  joinedAt   DateTime @default(now())
+
+  @@unique([teamId, employeeId])
+  @@index([employeeId])
+  @@map("team_members")
+}
+
+// ---------------------------------------------------------------------------
+// Offices & geofencing
+// ---------------------------------------------------------------------------
+
+model Office {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name       String
+  code       String
+  addressLine String
+  city       String
+  state      String?
+  country    String  @default("India")
+  postalCode String?
+  timezone   String  @default("Asia/Kolkata")
+
+  /// WGS-84 decimal degrees. Double precision keeps sub-millimetre accuracy,
+  /// which is far beyond what consumer GPS delivers.
+  latitude  Float
+  longitude Float
+
+  workdayStartMinutes Int @default(540)
+  workdayEndMinutes   Int @default(1080)
+  gracePeriodMinutes  Int @default(15)
+
+  status    OfficeStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  deletedAt DateTime?
+
+  geofences        OfficeGeofence[]
+  primaryEmployees Employee[]        @relation("EmployeePrimaryOffice")
+  employeeAccess   EmployeeOffice[]
+  attendanceRecords AttendanceRecord[]
+  attendanceEvents AttendanceEvent[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, status, deletedAt])
+  @@map("offices")
+}
+
+/// A circular zone around an office. Modelled separately from `Office` so a
+/// site can have several zones (main gate, annexe, parking) and so radius
+/// changes are auditable in isolation.
+model OfficeGeofence {
+  id       String @id @default(uuid()) @db.Uuid
+  officeId String @db.Uuid
+  office   Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+
+  name         String @default("Main perimeter")
+  latitude     Float
+  longitude    Float
+  radiusMeters Int    @default(100)
+  /// Exactly one geofence per office should be primary; enforced in the
+  /// office service, since Postgres partial unique indexes are not
+  /// expressible in the Prisma schema language.
+  isPrimary    Boolean @default(true)
+  isActive     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attendanceEvents AttendanceEvent[]
+
+  @@index([officeId, isActive])
+  @@map("office_geofences")
+}
+
+/// Extra offices an employee may check in from, beyond their primary one.
+model EmployeeOffice {
+  id         String   @id @default(uuid()) @db.Uuid
+  employeeId String   @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  officeId   String   @db.Uuid
+  office     Office   @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([employeeId, officeId])
+  @@index([officeId])
+  @@map("employee_offices")
+}
+
+// ---------------------------------------------------------------------------
+// Attendance
+// ---------------------------------------------------------------------------
+
+/// One row per employee per calendar day (in the office timezone). Derived
+/// totals are recomputed by the attendance service on every event.
+model AttendanceRecord {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employeeId     String       @db.Uuid
+  employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  officeId       String?      @db.Uuid
+  office         Office?      @relation(fields: [officeId], references: [id], onDelete: SetNull)
+
+  /// Midnight UTC of the office-local day this record belongs to.
+  date DateTime @db.Date
+
+  checkInAt  DateTime?
+  checkOutAt DateTime?
+
+  status AttendanceStatus @default(ABSENT)
+
+  workedMinutes   Int @default(0)
+  breakMinutes    Int @default(0)
+  overtimeMinutes Int @default(0)
+  lateByMinutes   Int @default(0)
+  earlyByMinutes  Int @default(0)
+
+  /// Set when a privileged user edited the record; paired with an audit log.
+  isManualEntry  Boolean @default(false)
+  overrideReason String?
+  notes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events AttendanceEvent[]
+  breaks BreakRecord[]
+
+  @@unique([employeeId, date])
+  @@index([organizationId, date])
+  @@index([organizationId, status, date])
+  @@index([officeId, date])
+  @@map("attendance_records")
+}
+
+/// Append-only log of every attendance action, with the location evidence the
+/// server used to decide. Never updated after insert.
+model AttendanceEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employeeId     String       @db.Uuid
+  employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  attendanceRecordId String?           @db.Uuid
+  attendanceRecord   AttendanceRecord? @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
+
+  officeId   String? @db.Uuid
+  office     Office? @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  geofenceId String? @db.Uuid
+  geofence   OfficeGeofence? @relation(fields: [geofenceId], references: [id], onDelete: SetNull)
+
+  type       AttendanceEventType
+  occurredAt DateTime            @default(now())
+
+  latitude       Float?
+  longitude      Float?
+  accuracyMeters Float?
+  /// Great-circle distance from the geofence centre, in metres.
+  distanceMeters Float?
+  verification   LocationVerification @default(NO_LOCATION)
+  source         AttendanceSource     @default(WEB)
+
+  /// Reason codes from the anti-spoofing checks, e.g. ["IMPOSSIBLE_TRAVEL"].
+  riskFlags String[] @default([])
+  ipAddress String?
+  userAgent String?
+  deviceId  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, employeeId, occurredAt])
+  @@index([attendanceRecordId])
+  @@index([organizationId, verification, occurredAt])
+  @@map("attendance_events")
+}
+
+model BreakRecord {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employeeId     String       @db.Uuid
+  employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  attendanceRecordId String           @db.Uuid
+  attendanceRecord   AttendanceRecord @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
+
+  startedAt DateTime
+  endedAt   DateTime?
+  minutes   Int       @default(0)
+  reason    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([attendanceRecordId])
+  @@index([organizationId, employeeId, startedAt])
+  @@map("break_records")
+}
+
+// ---------------------------------------------------------------------------
+// Tasks
+// ---------------------------------------------------------------------------
+
+model Task {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Sequential per-tenant reference shown in the UI, e.g. TF-118.
+  reference   Int
+  title       String
+  description String?
+
+  status   TaskStatus   @default(TODO)
+  priority TaskPriority @default(MEDIUM)
+
+  creatorId String?   @db.Uuid
+  creator   Employee? @relation("TaskCreator", fields: [creatorId], references: [id], onDelete: SetNull)
+
+  teamId String? @db.Uuid
+  team   Team?   @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  startDate   DateTime?
+  dueDate     DateTime?
+  completedAt DateTime?
+
+  estimatedHours Float?
+  actualHours    Float @default(0)
+  /// 0–100, kept in step with status by the task service.
+  progress       Int   @default(0)
+
+  tags String[] @default([])
+  /// Manual ordering within a kanban column.
+  boardOrder Float @default(0)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  assignees   TaskAssignee[]
+  comments    TaskComment[]
+  attachments TaskAttachment[]
+  activities  TaskActivity[]
+  subtasks    Subtask[]
+
+  @@unique([organizationId, reference])
+  @@index([organizationId, status, deletedAt])
+  @@index([organizationId, dueDate])
+  @@index([organizationId, teamId])
+  @@index([organizationId, priority, status])
+  @@map("tasks")
+}
+
+model TaskAssignee {
+  id         String   @id @default(uuid()) @db.Uuid
+  taskId     String   @db.Uuid
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  employeeId String   @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  /// The assignee accountable for the task; at most one per task.
+  isOwner    Boolean  @default(false)
+  assignedAt DateTime @default(now())
+
+  @@unique([taskId, employeeId])
+  @@index([employeeId])
+  @@map("task_assignees")
+}
+
+model Subtask {
+  id     String @id @default(uuid()) @db.Uuid
+  taskId String @db.Uuid
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  title       String
+  isCompleted Boolean   @default(false)
+  completedAt DateTime?
+  position    Int       @default(0)
+  createdAt   DateTime  @default(now())
+
+  @@index([taskId, position])
+  @@map("subtasks")
+}
+
+model TaskComment {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taskId         String       @db.Uuid
+  task           Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId       String?      @db.Uuid
+  author         Employee?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  body      String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([taskId, createdAt])
+  @@index([organizationId])
+  @@map("task_comments")
+}
+
+model TaskAttachment {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taskId         String       @db.Uuid
+  task           Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploaderId     String?      @db.Uuid
+  uploader       Employee?    @relation(fields: [uploaderId], references: [id], onDelete: SetNull)
+
+  fileName  String
+  fileSize  Int
+  mimeType  String
+  /// Object-storage key. Files are never served straight from the database.
+  storageKey String
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+  @@index([organizationId])
+  @@map("task_attachments")
+}
+
+model TaskActivity {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taskId         String       @db.Uuid
+  task           Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actorId        String?      @db.Uuid
+  actor          Employee?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  type      TaskActivityType
+  /// Human-readable summary rendered on the task timeline.
+  message   String
+  fromValue String?
+  toValue   String?
+  createdAt DateTime @default(now())
+
+  @@index([taskId, createdAt])
+  @@index([organizationId, createdAt])
+  @@map("task_activity")
+}
+
+// ---------------------------------------------------------------------------
+// Leave & calendar
+// ---------------------------------------------------------------------------
+
+model Leave {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employeeId     String       @db.Uuid
+  employee       Employee     @relation("LeaveEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+
+  type      LeaveType
+  status    LeaveStatus @default(PENDING)
+  startDate DateTime    @db.Date
+  endDate   DateTime    @db.Date
+  /// Supports half days, hence fractional.
+  days      Float
+  reason    String?
+
+  reviewerId String?   @db.Uuid
+  reviewer   Employee? @relation("LeaveReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviewedAt DateTime?
+  reviewNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, employeeId, startDate])
+  @@index([organizationId, status])
+  @@map("leaves")
+}
+
+model Holiday {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name       String
+  date       DateTime @db.Date
+  isOptional Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@unique([organizationId, date, name])
+  @@index([organizationId, date])
+  @@map("holidays")
+}
+
+// ---------------------------------------------------------------------------
+// Notifications & audit
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String       @db.Uuid
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type    NotificationType
+  channel NotificationChannel @default(IN_APP)
+  title   String
+  body    String
+  /// In-app deep link, e.g. "/app/tasks/<id>".
+  linkUrl String?
+
+  readAt DateTime?
+  /// Set once the email/push transport has accepted the message.
+  sentAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, readAt, createdAt])
+  @@index([organizationId, createdAt])
+  @@map("notifications")
+}
+
+/// Immutable trail for sensitive operations. Written by the audit service
+/// inside the same transaction as the change it describes.
+model AuditLog {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actorUserId    String?      @db.Uuid
+  actor          User?        @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  action     AuditAction
+  /// Table-ish name of the thing acted on, e.g. "office_geofences".
+  entityType String
+  entityId   String?
+  summary    String
+
+  /// Field-level before/after, redacted of anything sensitive.
+  changes    Json?
+  ipAddress  String?
+  userAgent  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, entityType, entityId])
+  @@index([actorUserId, createdAt])
+  @@map("audit_logs")
+}

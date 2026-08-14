@@ -1,0 +1,18 @@
+# Railway / Nixpacks build definition.
+#
+# The release phase runs migrations before the new container takes traffic, so
+# a deploy can never serve code against an older schema. `db:seed --if-empty`
+# populates a brand-new database once and then no-ops on every later deploy —
+# a redeploy will not duplicate demo data.
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "openssl"]
+
+[phases.install]
+cmds = ["npm ci --no-audit --no-fund"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm run release && npm run start"

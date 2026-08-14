@@ -1,0 +1,34 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+coverage/
+.turbo/
+
+# Environment — never commit real credentials
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Test artefacts
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# Local development database cluster (npm run dev:db)
+.pgdata/

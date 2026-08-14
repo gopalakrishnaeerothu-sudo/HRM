@@ -1,0 +1,280 @@
+import "server-only";
+
+import type { LeaveStatus, LeaveType } from "@prisma/client";
+import type { z } from "zod";
+
+import { prisma } from "@/lib/db";
+import { errors } from "@/lib/errors";
+import { startOfUtcDay } from "@/lib/time";
+import type { requestLeaveSchema, reviewLeaveSchema } from "@/lib/validation/attendance";
+import type { AuthSession } from "@/server/auth/types";
+import { hasPermission } from "@/server/auth/permissions";
+import { auditService } from "@/server/services/audit-service";
+import { notificationService } from "@/server/services/notification-service";
+import { resolveVisibleEmployeeIds, tenantScopeFor } from "@/server/services/access-service";
+
+/**
+ * Leave requests and approvals.
+ *
+ * Approved leave is not just a record — `attendanceRepository.findApprovedLeave`
+ * consults it on every attendance computation, so approving a request
+ * retroactively changes those days from ABSENT to ON_LEAVE. That coupling is
+ * why approval is permission-gated and audited.
+ */
+
+type RequestInput = z.infer<typeof requestLeaveSchema>;
+type ReviewInput = z.infer<typeof reviewLeaveSchema>;
+
+const leaveSelect = {
+  id: true,
+  type: true,
+  status: true,
+  startDate: true,
+  endDate: true,
+  days: true,
+  reason: true,
+  reviewedAt: true,
+  reviewNote: true,
+  createdAt: true,
+  employee: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      avatarUrl: true,
+      designation: true,
+      managerId: true,
+    },
+  },
+  reviewer: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+} as const;
+
+export const leaveService = {
+  /** The caller's own requests. */
+  async listMine(session: AuthSession) {
+    if (!session.employee) return [];
+
+    return prisma.leave.findMany({
+      where: { organizationId: session.organization.id, employeeId: session.employee.id },
+      select: leaveSelect,
+      orderBy: { startDate: "desc" },
+      take: 50,
+    });
+  },
+
+  /**
+   * Requests awaiting the caller's decision, plus recently reviewed ones.
+   * Bounded by the visibility envelope, so a manager sees only their own
+   * people's requests.
+   */
+  async listForReview(session: AuthSession, status?: LeaveStatus) {
+    if (!hasPermission(session.user.role, "leave:approve", session.permissionOverrides)) {
+      return [];
+    }
+
+    const envelope = await resolveVisibleEmployeeIds(session);
+
+    return prisma.leave.findMany({
+      where: {
+        organizationId: session.organization.id,
+        ...(envelope ? { employeeId: { in: [...envelope] } } : {}),
+        ...(status ? { status } : {}),
+        // Never surface your own request for your own approval.
+        ...(session.employee ? { NOT: { employeeId: session.employee.id } } : {}),
+      },
+      select: leaveSelect,
+      orderBy: [{ status: "asc" }, { startDate: "desc" }],
+      take: 60,
+    });
+  },
+
+  /** Remaining balance per type, for the current calendar year. */
+  async balances(session: AuthSession) {
+    if (!session.employee) return [];
+
+    const yearStart = new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1));
+
+    const taken = await prisma.leave.groupBy({
+      by: ["type"],
+      where: {
+        organizationId: session.organization.id,
+        employeeId: session.employee.id,
+        status: "APPROVED",
+        startDate: { gte: yearStart },
+      },
+      _sum: { days: true },
+    });
+
+    const takenByType = new Map(taken.map((row) => [row.type, row._sum.days ?? 0]));
+
+    // Entitlements are policy, not yet configurable per organisation — this is
+    // the one place to change when they become a settings field.
+    return DEFAULT_ENTITLEMENTS.map((entitlement) => ({
+      type: entitlement.type,
+      entitled: entitlement.days,
+      taken: takenByType.get(entitlement.type) ?? 0,
+      remaining: Math.max(0, entitlement.days - (takenByType.get(entitlement.type) ?? 0)),
+    }));
+  },
+
+  async request(session: AuthSession, input: RequestInput) {
+    const employee = session.employee;
+    if (!employee) throw errors.forbidden("This account has no employee profile.");
+
+    const scope = tenantScopeFor(session);
+
+    // Overlapping requests are the most common data error here, and they make
+    // the attendance lookup ambiguous — reject rather than pick one.
+    const overlapping = await prisma.leave.findFirst({
+      where: {
+        organizationId: scope.organizationId,
+        employeeId: employee.id,
+        status: { in: ["PENDING", "APPROVED"] },
+        startDate: { lte: startOfUtcDay(input.endDate) },
+        endDate: { gte: startOfUtcDay(input.startDate) },
+      },
+      select: { id: true, startDate: true, endDate: true },
+    });
+
+    if (overlapping) {
+      throw errors.conflict("You already have leave requested or approved that overlaps these dates.");
+    }
+
+    const created = await prisma.leave.create({
+      data: {
+        organizationId: scope.organizationId,
+        employeeId: employee.id,
+        type: input.type,
+        status: "PENDING",
+        startDate: startOfUtcDay(input.startDate),
+        endDate: startOfUtcDay(input.endDate),
+        days: input.days,
+        reason: input.reason,
+      },
+      select: leaveSelect,
+    });
+
+    await notificationService.leaveRequested(
+      scope,
+      employee.managerId,
+      `${employee.firstName} ${employee.lastName}`,
+      created.id,
+    );
+
+    return created;
+  },
+
+  async review(session: AuthSession, leaveId: string, input: ReviewInput) {
+    const scope = tenantScopeFor(session);
+
+    const leave = await prisma.leave.findFirst({
+      where: { id: leaveId, organizationId: scope.organizationId },
+      select: leaveSelect,
+    });
+    if (!leave) throw errors.notFound("leave request");
+
+    if (leave.status !== "PENDING") {
+      throw errors.conflict("That request has already been decided.");
+    }
+    if (session.employee && leave.employee.id === session.employee.id) {
+      throw errors.forbidden("You can't approve your own leave request.");
+    }
+
+    // The reviewer must be able to see this employee at all.
+    const envelope = await resolveVisibleEmployeeIds(session);
+    if (envelope !== null && !envelope.includes(leave.employee.id)) {
+      throw errors.notFound("leave request");
+    }
+
+    const updated = await prisma.leave.update({
+      where: { id: leaveId },
+      data: {
+        status: input.decision,
+        reviewerId: session.employee?.id ?? null,
+        reviewedAt: new Date(),
+        reviewNote: input.reviewNote ?? null,
+      },
+      select: leaveSelect,
+    });
+
+    await auditService.record(scope, session, {
+      action: "UPDATE",
+      entityType: "leaves",
+      entityId: leaveId,
+      summary: `${input.decision === "APPROVED" ? "Approved" : "Declined"} ${leave.employee.firstName} ${leave.employee.lastName}'s ${LEAVE_TYPE_SHORT[leave.type]} (${leave.days} ${leave.days === 1 ? "day" : "days"})`,
+      changes: { status: { from: "PENDING", to: input.decision }, note: input.reviewNote ?? null },
+    });
+
+    await notificationService.leaveReviewed(
+      scope,
+      leave.employee.id,
+      input.decision,
+      session.user.name,
+    );
+
+    return updated;
+  },
+
+  /** Withdraw a pending request. Only the requester may do this. */
+  async cancel(session: AuthSession, leaveId: string) {
+    const employee = session.employee;
+    if (!employee) throw errors.forbidden("This account has no employee profile.");
+
+    const result = await prisma.leave.updateMany({
+      where: {
+        id: leaveId,
+        organizationId: session.organization.id,
+        employeeId: employee.id,
+        status: "PENDING",
+      },
+      data: { status: "CANCELLED" },
+    });
+
+    if (result.count === 0) {
+      throw errors.notFound("pending leave request");
+    }
+
+    return { id: leaveId };
+  },
+
+  /** Approved leave overlapping a date range — used by the team calendar. */
+  async upcomingForTeam(session: AuthSession, from: Date, to: Date) {
+    const envelope = await resolveVisibleEmployeeIds(session);
+
+    return prisma.leave.findMany({
+      where: {
+        organizationId: session.organization.id,
+        status: "APPROVED",
+        ...(envelope ? { employeeId: { in: [...envelope] } } : {}),
+        startDate: { lte: startOfUtcDay(to) },
+        endDate: { gte: startOfUtcDay(from) },
+      },
+      select: leaveSelect,
+      orderBy: { startDate: "asc" },
+      take: 40,
+    });
+  },
+};
+
+/**
+ * Default annual entitlements. Not yet per-organisation configurable; when
+ * they become a settings field, this constant is the only thing to replace.
+ */
+const DEFAULT_ENTITLEMENTS: Array<{ type: LeaveType; days: number }> = [
+  { type: "CASUAL", days: 12 },
+  { type: "SICK", days: 12 },
+  { type: "EARNED", days: 15 },
+  { type: "COMP_OFF", days: 5 },
+];
+
+const LEAVE_TYPE_SHORT: Record<LeaveType, string> = {
+  CASUAL: "casual leave",
+  SICK: "sick leave",
+  EARNED: "earned leave",
+  UNPAID: "unpaid leave",
+  MATERNITY: "maternity leave",
+  PATERNITY: "paternity leave",
+  COMP_OFF: "comp off",
+};
+
+export type LeaveRecord = Awaited<ReturnType<typeof leaveService.listMine>>[number];
