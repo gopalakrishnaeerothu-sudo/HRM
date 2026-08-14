@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { requirePermission } from "@/server/auth";
+import { requirePagePermission } from "@/server/auth";
 import { employeeService } from "@/server/services/employee-service";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
 import { EmployeeForm } from "@/components/employees/employee-form";
@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: "Add employee" };
 
 export default async function NewEmployeePage() {
   // Gated server-side; the "Add employee" button is merely hidden for others.
-  const session = await requirePermission("employee:create");
+  const session = await requirePagePermission("employee:create");
 
   const [options, employees] = await Promise.all([
     employeeService.filterOptions(session),

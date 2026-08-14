@@ -1,4 +1,7 @@
 
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+
 import { branding } from "@/lib/branding";
 import { isProduction, serverEnv } from "@/lib/env";
 import { getSession } from "@/server/auth";
@@ -8,7 +11,6 @@ import { notificationService } from "@/server/services/notification-service";
 import { Sidebar } from "@/components/app-shell/sidebar";
 import { Topbar } from "@/components/app-shell/topbar";
 import { MobileBottomBar } from "@/components/app-shell/mobile-nav";
-import { NoSessionScreen } from "@/components/app-shell/no-session-screen";
 
 /**
  * Authenticated application shell.
@@ -26,10 +28,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const session = await getSession();
 
   if (!session) {
-    // No authentication provider is configured (or the dev adapter is off).
-    // Rather than redirect into a sign-in page that does not exist yet, explain
-    // the state — this is the seam a real adapter fills.
-    return <NoSessionScreen devAuthAvailable={!isProduction} />;
+    /**
+     * Anonymous: bounce to the sign-in page, server-side, before any child
+     * route runs. `redirect()` throws, so nothing below this line executes and
+     * no protected markup is ever generated — which is what makes this a real
+     * boundary rather than a client-side redirect someone can skip.
+     *
+     * The originating path is preserved so the user lands where they meant to
+     * go; `safeRedirect` on the way back rejects anything that is not a local
+     * path, so this cannot become an open redirect.
+     */
+    const headerList = await headers();
+    const attempted = headerList.get("x-invoke-path") ?? headerList.get("x-pathname");
+    const next = attempted && attempted.startsWith("/app") ? `?next=${encodeURIComponent(attempted)}` : "";
+
+    redirect(`/login${next}`);
   }
 
   const grantedPermissions: Permission[] = PERMISSIONS.filter((permission) =>

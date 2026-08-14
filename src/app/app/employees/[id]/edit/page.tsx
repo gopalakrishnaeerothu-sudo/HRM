@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
-import { requirePermission } from "@/server/auth";
+import { requirePagePermission } from "@/server/auth";
 import { employeeRepository } from "@/server/repositories/employee-repository";
 import { employeeService } from "@/server/services/employee-service";
 import { tenantScopeFor } from "@/server/services/access-service";
@@ -11,7 +11,7 @@ import { EmployeeForm, toFormValues } from "@/components/employees/employee-form
 export const metadata: Metadata = { title: "Edit employee" };
 
 export default async function EditEmployeePage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await requirePermission("employee:update");
+  const session = await requirePagePermission("employee:update");
   const { id } = await params;
 
   const [employee, options, employees] = await Promise.all([

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { taskQuerySchema, type TaskQuery } from "@/lib/validation/task";
-import { can, requirePermission } from "@/server/auth";
+import { can, requirePagePermission } from "@/server/auth";
 import { taskService } from "@/server/services/task-service";
 import { teamRepository } from "@/server/repositories/org-repository";
 import { tenantScopeFor } from "@/server/services/access-service";
@@ -23,7 +23,7 @@ export default async function TasksPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const session = await requirePermission("task:read");
+  const session = await requirePagePermission("task:read");
   const params = await searchParams;
 
   const parsed = taskQuerySchema.safeParse(params);

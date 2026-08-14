@@ -71,10 +71,16 @@ export interface AuthAdapter {
   signOut(): Promise<void>;
 }
 
+/** Client metadata recorded against a session, for the active-sessions view. */
+export interface SignInContext {
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}
+
 export type SignInCredentials =
-  | { kind: "dev-impersonation"; userId: string }
-  | { kind: "password"; email: string; password: string }
-  | { kind: "otp"; phone: string; code: string }
-  | { kind: "oauth"; provider: "google" | "microsoft"; code: string };
+  | { kind: "dev-impersonation"; userId: string; context?: SignInContext }
+  | { kind: "password"; email: string; password: string; context?: SignInContext }
+  | { kind: "otp"; phone: string; code: string; context?: SignInContext }
+  | { kind: "oauth"; provider: "google" | "microsoft"; code: string; context?: SignInContext };
 
 export const SESSION_COOKIE = "tfhr_session";

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 
 import { employeeQuerySchema } from "@/lib/validation/employee";
-import { requirePermission, getSession, can } from "@/server/auth";
+import { requirePagePermission, getSession, can } from "@/server/auth";
 import { employeeService } from "@/server/services/employee-service";
 import { Button } from "@/components/ui/button";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
@@ -23,7 +23,7 @@ export default async function EmployeesPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requirePermission("employee:read");
+  await requirePagePermission("employee:read");
   const session = await getSession();
 
   const params = await searchParams;

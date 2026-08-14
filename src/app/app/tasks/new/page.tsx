@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { requirePermission } from "@/server/auth";
+import { requirePagePermission } from "@/server/auth";
 import { employeeService } from "@/server/services/employee-service";
 import { teamRepository } from "@/server/repositories/org-repository";
 import { tenantScopeFor } from "@/server/services/access-service";
@@ -14,7 +14,7 @@ export default async function NewTaskPage({
 }: {
   searchParams: Promise<{ status?: string }>;
 }) {
-  const session = await requirePermission("task:create");
+  const session = await requirePagePermission("task:create");
   const { status } = await searchParams;
 
   const [employees, teams] = await Promise.all([

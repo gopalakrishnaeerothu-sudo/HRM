@@ -22,6 +22,7 @@ import {
   type UserRole,
 } from "@prisma/client";
 
+import { hashPassword } from "../src/server/auth/password";
 import {
   DEPARTMENTS,
   EMPLOYEES,
@@ -140,7 +141,30 @@ async function seedPermissions(): Promise<void> {
   });
 }
 
+/** Well-known development password. See the note where it is hashed. */
+const DEV_SEED_PASSWORD = "taskflow-dev-2026";
+
 async function main(): Promise<void> {
+  /**
+   * Hard refusal in production. This script truncates every table and creates
+   * accounts with a publicly-known password; running it against a real
+   * database would be catastrophic. `prisma/bootstrap.ts` is the production
+   * path.
+   */
+  if (process.env.NODE_ENV === "production" && !process.argv.includes("--i-know-this-is-destructive")) {
+    console.error(
+      [
+        "",
+        "✖ Refusing to run the development seed with NODE_ENV=production.",
+        "  This script deletes all data and creates accounts with a known password.",
+        "  Use `npm run db:bootstrap` to initialise a production database.",
+        "",
+      ].join("\n"),
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   const skipIfPopulated = process.argv.includes("--if-empty");
 
   if (skipIfPopulated) {
@@ -244,6 +268,21 @@ async function main(): Promise<void> {
   const employeeIdByCode = new Map<string, string>();
   const employeeOfficeCode = new Map<string, string>();
 
+  /**
+   * Every seeded account gets the same well-known development password, hashed
+   * with the production hasher — so the sign-in path exercised locally is
+   * byte-for-byte the one that runs in production.
+   *
+   * This is a DEVELOPMENT seed. The password is intentionally public and
+   * intentionally useless: `npm run db:seed` refuses to run against a
+   * production database (see the guard in main()), and the production
+   * bootstrap generates a random password instead.
+   *
+   * Hashed once and reused: 22 × scrypt at 32 MiB would otherwise make the
+   * seed needlessly slow.
+   */
+  const seedPasswordHash = await hashPassword(DEV_SEED_PASSWORD);
+
   const emailFor = (employee: SeedEmployee): string =>
     `${employee.firstName}.${employee.lastName}`.toLowerCase().replace(/\s+/g, "") +
     "@acmetech.example";
@@ -261,8 +300,10 @@ async function main(): Promise<void> {
         name: `${employee.firstName} ${employee.lastName}`,
         role: employee.role as UserRole,
         status: "ACTIVE",
-        provider: "DEV",
+        provider: "PASSWORD",
         emailVerified: new Date(),
+        passwordHash: seedPasswordHash,
+        passwordUpdatedAt: new Date(),
       },
       select: { id: true },
     });
@@ -812,7 +853,8 @@ async function main(): Promise<void> {
   console.log(`   Attendance   : ${attendanceRows.length} records over ${HISTORY_DAYS} days\n`);
   if (owner) {
     const ownerEmail = `${owner.firstName}.${owner.lastName}`.toLowerCase() + "@acmetech.example";
-    console.log(`   Default dev sign-in : ${ownerEmail}`);
+    console.log(`   Sign in as          : ${ownerEmail}`);
+    console.log(`   Password            : ${DEV_SEED_PASSWORD}   (development only)`);
     console.log(`   (set DEV_AUTH_DEFAULT_USER to any seeded email, or use the`);
     console.log(`    flask icon in the top bar to switch between roles)\n`);
   }

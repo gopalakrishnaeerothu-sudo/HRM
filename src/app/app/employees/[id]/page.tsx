@@ -15,7 +15,7 @@ import { formatMinutes } from "@/lib/utils";
 import { addDays, formatDate, zonedDateKey } from "@/lib/time";
 import { EMPLOYEE_STATUS_LABELS, EMPLOYMENT_TYPE_LABELS } from "@/lib/validation/employee";
 import { ATTENDANCE_STATUS_LABELS } from "@/lib/validation/attendance";
-import { can, requirePermission } from "@/server/auth";
+import { can, requirePagePermission } from "@/server/auth";
 import { attendanceRepository } from "@/server/repositories/attendance-repository";
 import { employeeRepository } from "@/server/repositories/employee-repository";
 import { taskService } from "@/server/services/task-service";
@@ -51,7 +51,7 @@ export async function generateMetadata({
 }: {
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
-  const session = await requirePermission("employee:read");
+  const session = await requirePagePermission("employee:read");
   const { id } = await params;
   const employee = await employeeRepository.findById(tenantScopeFor(session), id);
   return { title: employee ? `${employee.firstName} ${employee.lastName}` : "Employee" };
@@ -62,7 +62,7 @@ export async function generateMetadata({
  * history. Reads are tenant-scoped by the repository, so a foreign id 404s.
  */
 export default async function EmployeeProfilePage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await requirePermission("employee:read");
+  const session = await requirePagePermission("employee:read");
   const { id } = await params;
   const scope = tenantScopeFor(session);
 

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { UsersRound } from "lucide-react";
 
 import { formatNumber } from "@/lib/utils";
-import { can, requirePermission } from "@/server/auth";
+import { can, requirePagePermission } from "@/server/auth";
 import { teamRepository } from "@/server/repositories/org-repository";
 import { taskRepository } from "@/server/repositories/task-repository";
 import { employeeService } from "@/server/services/employee-service";
@@ -28,7 +28,7 @@ export const metadata: Metadata = { title: "Teams" };
  * organisation — an absolute bar would be a number nobody could interpret.
  */
 export default async function TeamsPage() {
-  const session = await requirePermission("team:read");
+  const session = await requirePagePermission("team:read");
   const scope = tenantScopeFor(session);
 
   const canManage = can(session, "team:manage");

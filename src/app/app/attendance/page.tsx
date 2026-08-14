@@ -5,7 +5,7 @@ import { CalendarCheck, CalendarDays, Clock, ShieldAlert, UserMinus } from "luci
 import { formatMinutes } from "@/lib/utils";
 import { addDays, formatDate, formatDateTime, formatTime, zonedDateKey } from "@/lib/time";
 import { attendanceQuerySchema, ATTENDANCE_STATUS_LABELS } from "@/lib/validation/attendance";
-import { can, requirePermission } from "@/server/auth";
+import { can, requirePagePermission } from "@/server/auth";
 import { RISK_FLAG_LABELS, type GeoRiskFlag } from "@/server/geo/verify";
 import { attendanceRepository } from "@/server/repositories/attendance-repository";
 import { narrowScope, tenantScopeFor } from "@/server/services/access-service";
@@ -45,7 +45,7 @@ export default async function AttendancePage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const session = await requirePermission("attendance:read:team");
+  const session = await requirePagePermission("attendance:read:team");
   const scope = tenantScopeFor(session);
   const params = await searchParams;
 

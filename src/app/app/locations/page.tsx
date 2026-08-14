@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Building2, ShieldCheck } from "lucide-react";
 
-import { can, requirePermission } from "@/server/auth";
+import { can, requirePagePermission } from "@/server/auth";
 import { officeService } from "@/server/services/office-service";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/states";
@@ -19,7 +19,7 @@ export const metadata: Metadata = { title: "Office locations" };
  * radii, which are organisational configuration rather than personal data.
  */
 export default async function LocationsPage() {
-  const session = await requirePermission("office:read");
+  const session = await requirePagePermission("office:read");
   const offices = await officeService.list(session);
 
   const canManageGeofence = can(session, "geofence:manage");

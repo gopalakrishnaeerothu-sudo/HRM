@@ -3,7 +3,7 @@ import { BarChart3, Clock, Download, TrendingUp, Users } from "lucide-react";
 
 import { formatMinutes } from "@/lib/utils";
 import { addDays, formatDate, zonedDateKey } from "@/lib/time";
-import { can, requirePermission } from "@/server/auth";
+import { can, requirePagePermission } from "@/server/auth";
 import { dashboardService } from "@/server/services/dashboard-service";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -42,7 +42,7 @@ export default async function ReportsPage({
 }: {
   searchParams: Promise<{ days?: string }>;
 }) {
-  const session = await requirePermission("report:read");
+  const session = await requirePagePermission("report:read");
   const { days } = await searchParams;
 
   const rangeDays = Math.min(90, Math.max(7, Number(days) || 30));

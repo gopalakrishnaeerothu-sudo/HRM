@@ -27,7 +27,9 @@
     "dev:db:stop": "node scripts/dev-db.mjs stop",
     "dev:db:reset": "node scripts/dev-db.mjs reset",
     "test:db:create": "node scripts/create-test-db.mjs",
-    "test:integration": "node scripts/create-test-db.mjs && vitest run"
+    "test:integration": "node scripts/create-test-db.mjs && vitest run",
+    "db:bootstrap": "tsx prisma/bootstrap.ts",
+    "db:set-password": "tsx prisma/set-password.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.3.0",

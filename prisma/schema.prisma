@@ -277,6 +277,18 @@ model User {
   /// Stable subject id from the external identity provider, when there is one.
   providerAccountId String?
 
+  /// scrypt digest, stored as `scrypt$N$r$p$salt$hash` (see server/auth/password.ts).
+  /// Null for accounts that authenticate through an external provider, and for
+  /// invited users who have not yet set a password.
+  passwordHash      String?
+  passwordUpdatedAt DateTime?
+  /// Forces a password change on next sign-in — set by an admin reset.
+  mustChangePassword Boolean @default(false)
+
+  /// Throttling state for credential stuffing. Reset on any successful sign-in.
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -301,7 +313,8 @@ model Session {
   userId         String       @db.Uuid
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  /// SHA-256 of the session token. The raw token is never persisted.
+  /// SHA-256 of the session token. The raw token is never persisted, so a
+  /// database leak does not hand over live sessions.
   tokenHash String   @unique
   expiresAt DateTime
   ipAddress String?
@@ -309,8 +322,14 @@ model Session {
   revokedAt DateTime?
   createdAt DateTime @default(now())
 
+  /// Sliding-window activity, used to expire idle sessions ahead of `expiresAt`.
+  lastUsedAt DateTime @default(now())
+  /// Set when this session was replaced by a rotated one, for traceability.
+  rotatedToId String? @db.Uuid
+
   @@index([userId, expiresAt])
   @@index([organizationId])
+  @@index([expiresAt])
   @@map("sessions")
 }
 

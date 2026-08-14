@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { FileClock } from "lucide-react";
 
 import { formatDateTime } from "@/lib/time";
-import { requirePermission } from "@/server/auth";
+import { requirePagePermission } from "@/server/auth";
 import { ROLE_LABELS } from "@/server/auth/permissions";
 import { auditService } from "@/server/services/audit-service";
 import { tenantScopeFor } from "@/server/services/access-service";
@@ -33,7 +33,7 @@ const ACTION_TONE = {
  * in the codebase, because a mutable audit log is not an audit log.
  */
 export default async function AuditLogPage() {
-  const session = await requirePermission("audit:read");
+  const session = await requirePagePermission("audit:read");
   const entries = await auditService.list(tenantScopeFor(session), 100);
 
   return (

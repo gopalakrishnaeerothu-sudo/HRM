@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, LogOut, Menu, Search, Settings, User as UserIcon } from "lucide-react";
+import { Bell, Home, Menu, Search, Settings, User as UserIcon } from "lucide-react";
 
 import { cn, initials } from "@/lib/utils";
 import { formatRelative } from "@/lib/time";
@@ -25,6 +25,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { CommandPalette, useCommandPalette } from "@/components/app-shell/command-palette";
 import { MobileNavDrawer } from "@/components/app-shell/mobile-nav";
 import { DevRoleSwitcher } from "@/components/app-shell/dev-role-switcher";
+import { SignOutItem } from "@/components/auth/sign-out-item";
 
 export interface TopbarUser {
   id: string;
@@ -281,10 +282,11 @@ export function Topbar({
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
                   <Link href="/">
-                    <LogOut />
+                    <Home />
                     Back to {productName}
                   </Link>
                 </DropdownMenuItem>
+                <SignOutItem />
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

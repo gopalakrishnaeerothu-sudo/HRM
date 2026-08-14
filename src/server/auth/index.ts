@@ -1,11 +1,13 @@
 import "server-only";
 
 import { cache } from "react";
+import { redirect } from "next/navigation";
 
 import { errors } from "@/lib/errors";
 import { isProduction, serverEnv } from "@/lib/env";
 import { hasPermission, type Permission } from "@/server/auth/permissions";
 import { devAuthAdapter } from "@/server/auth/dev-adapter";
+import { productionAuthAdapter } from "@/server/auth/production-adapter";
 import type { AuthAdapter, AuthSession } from "@/server/auth/types";
 
 /**
@@ -18,36 +20,25 @@ import type { AuthAdapter, AuthSession } from "@/server/auth/types";
  */
 
 /**
- * Placeholder for the production adapter. It deliberately throws rather than
- * falling back to something permissive: an unconfigured production deployment
- * must fail closed.
+ * Adapter selection.
  *
- * To implement: verify the session cookie against the `sessions` table
- * (`tokenHash` = SHA-256 of the cookie value, `expiresAt` in the future,
- * `revokedAt` null), then build the same `AuthSession` shape the dev adapter
- * returns. See src/server/auth/README.md.
+ * The production adapter — email/password with server-side sessions — is the
+ * default and the only thing that ever runs in production. The development
+ * impersonation adapter is reachable *only* when both conditions hold:
+ *
+ *   NODE_ENV !== "production"   AND   DEV_AUTH_ENABLED === "true"
+ *
+ * `isProduction` is evaluated first and short-circuits, so a production
+ * deployment that forgets to unset the flag still gets the real adapter. The
+ * dev adapter additionally re-asserts both conditions internally, and the
+ * /api/dev/* routes assert them a third time — three independent fences on the
+ * same door, because the cost of that door being open is total.
  */
-const unconfiguredProductionAdapter: AuthAdapter = {
-  name: "unconfigured",
-  strategy: "session-cookie",
-  async getSession() {
-    return null;
-  },
-  async signIn() {
-    throw errors.precondition(
-      "No authentication provider is configured for this deployment. Register an AuthAdapter in src/server/auth/index.ts.",
-    );
-  },
-  async signOut() {
-    /* nothing to revoke */
-  },
-};
-
 function resolveAdapter(): AuthAdapter {
   if (!isProduction && serverEnv().DEV_AUTH_ENABLED) {
     return devAuthAdapter;
   }
-  return unconfiguredProductionAdapter;
+  return productionAuthAdapter;
 }
 
 export const authAdapter = { get current() { return resolveAdapter(); } };
@@ -95,6 +86,43 @@ export async function requirePermission(permission: Permission): Promise<AuthSes
   if (!hasPermission(session.user.role, permission, session.permissionOverrides)) {
     throw errors.forbidden();
   }
+  return session;
+}
+
+/**
+ * Page-level authorisation gate.
+ *
+ * `requirePermission` raises an `AppError`, which a route handler turns into a
+ * 403 — correct for an API. In a Server Component that same throw is caught by
+ * the nearest `error.tsx` and rendered as a generic error page, which is both
+ * the wrong status and an unhelpful dead end.
+ *
+ * This redirects instead:
+ *   · no session      → /login, preserving nothing (the layout handles `next`)
+ *   · wrong role      → /app?denied=<permission>, so the user lands somewhere
+ *                       useful and the dashboard can explain what happened
+ *
+ * A redirect is issued before any page data is fetched, so nothing the caller
+ * is not entitled to is ever queried, let alone rendered.
+ *
+ * Note on `notFound()`: it was tried here first, to match the 404-not-403
+ * convention the repositories use. Under a `force-dynamic` layout Next has
+ * already committed a 200 by the time the page body throws, so the response
+ * carried the not-found *content* with a 200 *status*. No data leaked — the
+ * check still runs before any query — but the status was misleading, and a
+ * redirect avoids the ambiguity entirely.
+ */
+export async function requirePagePermission(permission: Permission): Promise<AuthSession> {
+  const session = await getSession();
+
+  if (!session) {
+    redirect("/login");
+  }
+
+  if (!hasPermission(session.user.role, permission, session.permissionOverrides)) {
+    redirect(`/app?denied=${encodeURIComponent(permission)}`);
+  }
+
   return session;
 }
 

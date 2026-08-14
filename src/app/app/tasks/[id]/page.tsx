@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { branding } from "@/lib/branding";
 import { isAppError } from "@/lib/errors";
-import { can, requirePermission } from "@/server/auth";
+import { can, requirePagePermission } from "@/server/auth";
 import { taskService } from "@/server/services/task-service";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
 import { TaskDetailView } from "@/components/tasks/task-detail-view";
@@ -13,7 +13,7 @@ export async function generateMetadata({
 }: {
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
-  const session = await requirePermission("task:read");
+  const session = await requirePagePermission("task:read");
   const { id } = await params;
   try {
     const task = await taskService.detail(session, id);
@@ -24,7 +24,7 @@ export async function generateMetadata({
 }
 
 export default async function TaskDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await requirePermission("task:read");
+  const session = await requirePagePermission("task:read");
   const { id } = await params;
 
   let task;
