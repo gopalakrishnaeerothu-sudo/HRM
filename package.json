@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
-    "db:migrate": "prisma migrate dev",
+    "db:migrate": "node scripts/migrate.mjs",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
@@ -27,7 +27,8 @@
     "dev:db:stop": "node scripts/dev-db.mjs stop",
     "dev:db:reset": "node scripts/dev-db.mjs reset",
     "test:db:create": "node scripts/create-test-db.mjs",
-    "test:integration": "node scripts/create-test-db.mjs && vitest run"
+    "test:integration": "node scripts/create-test-db.mjs && vitest run",
+    "db:migrate:status": "node scripts/migrate.mjs status"
   },
   "dependencies": {
     "@prisma/client": "^6.3.0",
@@ -54,6 +55,7 @@
     "lucide-react": "^0.469.0",
     "next": "^15.1.6",
     "next-themes": "^0.4.4",
+    "pg": "^8.23.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "recharts": "^2.15.0",
@@ -69,6 +71,7 @@
     "@playwright/test": "^1.49.1",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^22.10.5",
+    "@types/pg": "^8.21.0",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
     "@types/three": "^0.185.0",
