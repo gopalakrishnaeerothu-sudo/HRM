@@ -1,4 +1,4 @@
-import type { UserRole } from "@prisma/client";
+import type { UserRole } from "@/server/db/types";
 
 import type { Permission } from "@/server/auth/permissions";
 

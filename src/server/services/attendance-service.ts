@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { AttendanceSource } from "@prisma/client";
+import type { AttendanceSource } from "@/server/db/types";
 import { z } from "zod";
 
 import { prisma } from "@/lib/db";

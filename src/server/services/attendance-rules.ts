@@ -1,4 +1,4 @@
-import type { AttendanceStatus } from "@prisma/client";
+import type { AttendanceStatus } from "@/server/db/types";
 
 /**
  * Pure attendance arithmetic.

@@ -1,4 +1,4 @@
-import type { LocationVerification } from "@prisma/client";
+import type { LocationVerification } from "@/server/db/types";
 
 import { distanceMeters, impliedSpeedKmh, isValidCoordinate, type Coordinates } from "@/server/geo/distance";
 

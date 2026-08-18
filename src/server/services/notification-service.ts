@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { NotificationType } from "@prisma/client";
+import type { NotificationType } from "@/server/db/types";
 
 import { prisma } from "@/lib/db";
 import type { AuthSession } from "@/server/auth/types";

@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { AuditAction } from "@prisma/client";
+import type { AuditAction } from "@/server/db/types";
 import { headers } from "next/headers";
 
 import type { AuthSession } from "@/server/auth/types";

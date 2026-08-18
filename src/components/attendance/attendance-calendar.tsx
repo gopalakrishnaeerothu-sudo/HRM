@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import type { AttendanceStatus } from "@prisma/client";
+import type { AttendanceStatus } from "@/server/db/types";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { cn, formatMinutes } from "@/lib/utils";

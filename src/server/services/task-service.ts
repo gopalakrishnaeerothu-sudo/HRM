@@ -1,6 +1,8 @@
 import "server-only";
 
-import type { Prisma, TaskActivityType } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
+
+import type { TaskActivityType } from "@/server/db/types";
 
 import { prisma } from "@/lib/db";
 import { errors } from "@/lib/errors";

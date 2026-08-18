@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { LeaveStatus, LeaveType } from "@prisma/client";
+import type { LeaveStatus, LeaveType } from "@/server/db/types";
 import type { z } from "zod";
 
 import { prisma } from "@/lib/db";
