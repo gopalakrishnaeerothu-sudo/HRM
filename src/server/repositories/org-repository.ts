@@ -5,6 +5,7 @@ import { assertFound, exec, type TenantScope } from "@/server/db/tenant";
 import {
   nullableRelation,
   toCount,
+  toNumber,
   type AuditAction,
   type EmployeeStatus,
   type NotificationChannel,
@@ -642,25 +643,89 @@ export interface AttendancePolicy {
   requireCheckoutLocation: boolean;
 }
 
+/**
+ * The whole organisation, as the settings screens need it.
+ *
+ * Profile and policy together rather than split: every settings form reads the
+ * current values to show them, and a second round-trip to fetch the half the
+ * first call omitted is not worth the columns saved.
+ */
+export interface OrganizationRecord extends AttendancePolicy {
+  slug: string;
+  name: string;
+  legalName: string | null;
+  logoUrl: string | null;
+  plan: string;
+  currency: string;
+  locale: string;
+}
+
+interface OrganizationRow {
+  id: string;
+  slug: string;
+  name: string;
+  legal_name: string | null;
+  logo_url: string | null;
+  plan: string;
+  timezone: string;
+  currency: string;
+  locale: string;
+  workday_start_minutes: number;
+  workday_end_minutes: number;
+  grace_period_minutes: number;
+  full_day_hours: number;
+  half_day_hours: number;
+  weekend_days: number[];
+  max_accuracy_meters: number;
+  max_travel_speed_kmh: number;
+  enforce_geofence: boolean;
+  allow_manual_override: boolean;
+  require_checkout_location: boolean;
+}
+
+const ORGANIZATION_COLUMNS = `
+  id, slug, name, legal_name, logo_url, plan, timezone, currency, locale,
+  workday_start_minutes, workday_end_minutes, grace_period_minutes,
+  full_day_hours, half_day_hours, weekend_days,
+  max_accuracy_meters, max_travel_speed_kmh,
+  enforce_geofence, allow_manual_override, require_checkout_location
+`;
+
+function mapOrganization(row: OrganizationRow): OrganizationRecord {
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    legalName: row.legal_name,
+    logoUrl: row.logo_url,
+    plan: row.plan,
+    timezone: row.timezone,
+    currency: row.currency,
+    locale: row.locale,
+    workdayStartMinutes: row.workday_start_minutes,
+    workdayEndMinutes: row.workday_end_minutes,
+    gracePeriodMinutes: row.grace_period_minutes,
+    fullDayHours: toNumber(row.full_day_hours),
+    halfDayHours: toNumber(row.half_day_hours),
+    weekendDays: row.weekend_days,
+    maxAccuracyMeters: toNumber(row.max_accuracy_meters),
+    maxTravelSpeedKmh: toNumber(row.max_travel_speed_kmh),
+    enforceGeofence: row.enforce_geofence,
+    allowManualOverride: row.allow_manual_override,
+    requireCheckoutLocation: row.require_checkout_location,
+  };
+}
+
 export const organizationRepository = {
   async findById(organizationId: string, executor: Executor = db()) {
-    return queryOne<{
-      id: string;
-      slug: string;
-      name: string;
-      legal_name: string | null;
-      logo_url: string | null;
-      plan: string;
-      timezone: string;
-      currency: string;
-      locale: string;
-    }>(
-      `SELECT id, slug, name, legal_name, logo_url, plan, timezone, currency, locale
-         FROM organizations
+    const row = await queryOne<OrganizationRow>(
+      `SELECT ${ORGANIZATION_COLUMNS} FROM organizations
         WHERE id = $1 AND deleted_at IS NULL`,
       [organizationId],
       executor,
     );
+
+    return row ? mapOrganization(row) : null;
   },
 
   async requireById(organizationId: string, executor: Executor = db()) {
@@ -689,8 +754,11 @@ export const organizationRepository = {
       requireCheckoutLocation?: boolean;
     },
     executor: Executor = db(),
-  ): Promise<boolean> {
-    const affected = await execute(
+  ): Promise<OrganizationRecord> {
+    // RETURNING rather than a follow-up SELECT: the caller audits a
+    // before/after diff, and re-reading could pick up a concurrent edit and
+    // attribute someone else's change to this one.
+    const row = await queryOne<OrganizationRow>(
       `UPDATE organizations SET
          name                      = COALESCE($2, name),
          legal_name                = COALESCE($3, legal_name),
@@ -709,7 +777,8 @@ export const organizationRepository = {
          enforce_geofence          = COALESCE($16, enforce_geofence),
          allow_manual_override     = COALESCE($17, allow_manual_override),
          require_checkout_location = COALESCE($18, require_checkout_location)
-       WHERE id = $1 AND deleted_at IS NULL`,
+       WHERE id = $1 AND deleted_at IS NULL
+       RETURNING ${ORGANIZATION_COLUMNS}`,
       [
         organizationId,
         data.name ?? null,
@@ -733,7 +802,7 @@ export const organizationRepository = {
       executor,
     );
 
-    return affected > 0;
+    return assertFound(row ? mapOrganization(row) : null, "organisation");
   },
 
   /** The attendance policy fields, read on every check-in. */
