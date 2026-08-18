@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 
 import { branding } from "@/lib/branding";
 import { isProduction, serverEnv } from "@/lib/env";
@@ -8,7 +9,6 @@ import { notificationService } from "@/server/services/notification-service";
 import { Sidebar } from "@/components/app-shell/sidebar";
 import { Topbar } from "@/components/app-shell/topbar";
 import { MobileBottomBar } from "@/components/app-shell/mobile-nav";
-import { NoSessionScreen } from "@/components/app-shell/no-session-screen";
 
 /**
  * Authenticated application shell.
@@ -25,12 +25,11 @@ import { NoSessionScreen } from "@/components/app-shell/no-session-screen";
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession();
 
-  if (!session) {
-    // No authentication provider is configured (or the dev adapter is off).
-    // Rather than redirect into a sign-in page that does not exist yet, explain
-    // the state — this is the seam a real adapter fills.
-    return <NoSessionScreen devAuthAvailable={!isProduction} />;
-  }
+  // Signed out, or holding a cookie that has expired or been revoked. The
+  // sign-in page re-checks and bounces back here if the session is in fact
+  // valid, so a redirect loop needs both to disagree, not just this one to be
+  // wrong.
+  if (!session) redirect("/login");
 
   const grantedPermissions: Permission[] = PERMISSIONS.filter((permission) =>
     hasPermission(session.user.role, permission, session.permissionOverrides),

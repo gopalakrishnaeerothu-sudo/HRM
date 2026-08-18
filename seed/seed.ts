@@ -20,6 +20,8 @@
 
 import { Pool, type PoolClient } from "pg";
 
+import { hashPassword } from "../src/server/auth/password";
+
 import {
   DEPARTMENTS,
   EMPLOYEES,
@@ -30,6 +32,16 @@ import {
   TEAMS,
   type SeedEmployee,
 } from "./data";
+
+/**
+ * The password every seeded account is given.
+ *
+ * One shared password across 22 demo accounts is only acceptable because they
+ * are demo accounts. Set SEED_PASSWORD before seeding anything reachable from
+ * the internet — the default is published in this repository, so a deployment
+ * that keeps it has 22 known logins.
+ */
+const seedPassword = process.env.SEED_PASSWORD ?? "taskflow-demo";
 
 // --- Deterministic randomness ----------------------------------------------
 
@@ -224,9 +236,16 @@ async function seed(client: PoolClient): Promise<{ attendance: number; events: n
     const email = emailFor(employee);
 
     const { rows: userRows } = await client.query<{ id: string }>(
-      `INSERT INTO users (organization_id, email, name, role, status, provider, email_verified)
-       VALUES ($1,$2,$3,$4::user_role,'ACTIVE','DEV',NOW()) RETURNING id`,
-      [organizationId, email, `${employee.firstName} ${employee.lastName}`, employee.role],
+      `INSERT INTO users (organization_id, email, name, role, status, provider, email_verified,
+                          password_hash, password_updated_at)
+       VALUES ($1,$2,$3,$4::user_role,'ACTIVE','PASSWORD',NOW(),$5,NOW()) RETURNING id`,
+      [
+        organizationId,
+        email,
+        `${employee.firstName} ${employee.lastName}`,
+        employee.role,
+        await hashPassword(seedPassword),
+      ],
     );
     const userId = userRows[0]!.id;
 
@@ -937,9 +956,20 @@ async function main(): Promise<void> {
     console.log(`   Tasks        : ${TASKS.length}`);
     console.log(`   Attendance   : ${counts.attendance} records, ${counts.events} events\n`);
     if (owner) {
-      console.log(`   Default dev sign-in : ${emailFor(owner)}`);
-      console.log(`   (set DEV_AUTH_DEFAULT_USER to any seeded email, or use the`);
-      console.log(`    flask icon in the top bar to switch between roles)\n`);
+      console.log(`   Sign in at /login as : ${emailFor(owner)}`);
+      console.log(
+        `   Password             : ${
+          process.env.SEED_PASSWORD ? "(from SEED_PASSWORD)" : `${seedPassword}  ← default, change it`
+        }`,
+      );
+      console.log(`   Every seeded account shares this password; any of the 22 emails works.\n`);
+
+      if (!process.env.SEED_PASSWORD) {
+        console.log(
+          "   ⚠ The default password is published in this repository. Set SEED_PASSWORD\n" +
+            "     before seeding any database that is reachable from the internet.\n",
+        );
+      }
     }
   } catch (error) {
     await client.query("ROLLBACK");
