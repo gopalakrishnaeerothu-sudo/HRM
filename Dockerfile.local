@@ -1,12 +1,20 @@
-# Optional container build.
+# Optional container build. NOT used by Railway.
 #
-# Railway's default Nixpacks builder does not need this — see nixpacks.toml.
+# Deliberately named `Dockerfile.local` rather than `Dockerfile`: Railway picks
+# up a root Dockerfile automatically and builds with it, which silently
+# overrides the Nixpacks configuration in nixpacks.toml. Renaming it is what
+# keeps Railway on the Nixpacks path. Do not rename it back.
+#
 # Use it when you want a reproducible image, or to deploy somewhere other than
 # Railway. It relies on Next's standalone output, which is opt-in because its
 # build-trace step fails on OneDrive-synced Windows folders (see next.config.ts).
 #
-#   docker build -t taskflow-hr .
+#   docker build -f Dockerfile.local -t taskflow-hr .
 #   docker run -p 3000:3000 --env-file .env taskflow-hr
+#
+# Note: unlike the Nixpacks path, this image does NOT run migrations or the
+# seed at boot — its CMD goes straight to the server. Run `npm run release`
+# against the target database yourself before starting a container from it.
 
 # ---------- deps ----------
 FROM node:20-alpine AS deps

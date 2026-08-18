@@ -9,10 +9,16 @@
 nixPkgs = ["nodejs_20", "openssl"]
 
 [phases.install]
-cmds = ["npm ci --no-audit --no-fund"]
+# `--include=dev` is not redundant: Railway sets NODE_ENV=production, under
+# which npm omits devDependencies. The build needs them (typescript, tailwind)
+# and so does the release phase — `db:seed` runs through tsx, a devDependency.
+cmds = ["npm ci --include=dev --no-audit --no-fund"]
 
 [phases.build]
 cmds = ["npm run build"]
 
 [start]
+# Mirrored by `deploy.startCommand` in railway.json, which takes precedence over
+# this block. Change both together, or the one you edit may not be the one that
+# runs.
 cmd = "npm run release && npm run start"

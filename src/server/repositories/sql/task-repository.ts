@@ -281,14 +281,6 @@ export function buildTaskFilter(
   return filter;
 }
 
-const SORT_COLUMNS: Record<string, string> = {
-  priority: "t.priority",
-  createdAt: "t.created_at",
-  title: "t.title",
-  status: "t.status",
-  dueDate: "t.due_date",
-};
-
 function buildOrderBy(criteria: Partial<TaskQuery>): string {
   const direction = criteria.sortOrder === "desc" ? "DESC" : "ASC";
   const inverse = direction === "ASC" ? "DESC" : "ASC";
