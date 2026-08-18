@@ -1,17 +1,20 @@
 import { NextResponse } from "next/server";
 
-import { prisma } from "@/lib/db";
+import { queryOne } from "@/server/db/query";
 
 /**
- * Health check for Railway.
+ * Health check for the platform.
  *
- * Verifies the process is up *and* that it can reach PostgreSQL, because a
- * container that answers HTTP but cannot query the database is not healthy in
- * any useful sense. Returns 503 on failure so the platform replaces it.
+ * Verifies the process is up *and* that it can reach PostgreSQL *and* that the
+ * schema it expects is actually there. The last part is not pedantry: a
+ * `SELECT 1` passes against a database with no tables at all, so an instance
+ * pointed at an unmigrated database reports itself healthy while every page
+ * fails. Touching a real table makes the check mean what it says.
+ *
+ * Returns 503 on failure so the platform replaces it.
  *
  * Deliberately says nothing about the database beyond up/down — no version, no
- * host, no connection string. Configure this path in railway.json under
- * `healthcheckPath`.
+ * host, no connection string, no row counts.
  */
 
 export const dynamic = "force-dynamic";
@@ -21,7 +24,18 @@ export async function GET() {
   const startedAt = Date.now();
 
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    // `to_regclass` returns NULL rather than raising when the table is absent,
+    // so a missing schema is a clean 503 instead of an unhandled error.
+    const row = await queryOne<{ migrated: boolean }>(
+      `SELECT to_regclass('public.organizations') IS NOT NULL AS migrated`,
+    );
+
+    if (!row?.migrated) {
+      return NextResponse.json(
+        { status: "degraded", reason: "schema_not_migrated", timestamp: new Date().toISOString() },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
 
     return NextResponse.json(
       {

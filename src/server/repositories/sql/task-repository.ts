@@ -13,6 +13,7 @@ import {
   nullableRelation,
   toCount,
   toStringArray,
+  type TaskActivityType,
   type TaskPriority,
   type TaskStatus,
 } from "@/server/db/types";
@@ -359,7 +360,7 @@ export const sqlTaskRepository = {
 
     if (!row) return null;
 
-    const [subtasks, comments] = await Promise.all([
+    const [subtasks, comments, attachments, activities] = await Promise.all([
       query<{
         id: string;
         title: string;
@@ -391,6 +392,53 @@ export const sqlTaskRepository = {
         [id],
         executor,
       ),
+      query<{
+        id: string;
+        file_name: string;
+        file_size: string;
+        mime_type: string;
+        storage_key: string;
+        created_at: Date;
+        uploader_id: string | null;
+        uploader_first_name: string | null;
+        uploader_last_name: string | null;
+      }>(
+        `SELECT ta.id, ta.file_name, ta.file_size, ta.mime_type, ta.storage_key, ta.created_at,
+                u.id AS uploader_id, u.first_name AS uploader_first_name,
+                u.last_name AS uploader_last_name
+           FROM task_attachments ta
+           LEFT JOIN employees u ON u.id = ta.uploader_id
+          WHERE ta.task_id = $1
+          ORDER BY ta.created_at DESC`,
+        [id],
+        executor,
+      ),
+      query<{
+        id: string;
+        type: TaskActivityType;
+        message: string;
+        from_value: string | null;
+        to_value: string | null;
+        created_at: Date;
+        actor_id: string | null;
+        actor_first_name: string | null;
+        actor_last_name: string | null;
+        actor_avatar_url: string | null;
+      }>(
+        // Capped like the Prisma version it replaces: a long-lived task
+        // accumulates hundreds of entries and the timeline only shows recent
+        // ones.
+        `SELECT tac.id, tac.type, tac.message, tac.from_value, tac.to_value, tac.created_at,
+                a.id AS actor_id, a.first_name AS actor_first_name,
+                a.last_name AS actor_last_name, a.avatar_url AS actor_avatar_url
+           FROM task_activity tac
+           LEFT JOIN employees a ON a.id = tac.actor_id
+          WHERE tac.task_id = $1
+          ORDER BY tac.created_at DESC
+          LIMIT 60`,
+        [id],
+        executor,
+      ),
     ]);
 
     return {
@@ -412,6 +460,35 @@ export const sqlTaskRepository = {
           firstName: comment.author_first_name!,
           lastName: comment.author_last_name!,
           avatarUrl: comment.author_avatar_url,
+        })),
+      })),
+      attachments: attachments.map((attachment) => ({
+        id: attachment.id,
+        fileName: attachment.file_name,
+        // BIGINT arrives as a string from pg — it can exceed Number's safe
+        // range in general, though a file size never will.
+        fileSize: Number(attachment.file_size),
+        mimeType: attachment.mime_type,
+        storageKey: attachment.storage_key,
+        createdAt: attachment.created_at,
+        uploader: nullableRelation(attachment.uploader_id, () => ({
+          id: attachment.uploader_id!,
+          firstName: attachment.uploader_first_name!,
+          lastName: attachment.uploader_last_name!,
+        })),
+      })),
+      activities: activities.map((activity) => ({
+        id: activity.id,
+        type: activity.type,
+        message: activity.message,
+        fromValue: activity.from_value,
+        toValue: activity.to_value,
+        createdAt: activity.created_at,
+        actor: nullableRelation(activity.actor_id, () => ({
+          id: activity.actor_id!,
+          firstName: activity.actor_first_name!,
+          lastName: activity.actor_last_name!,
+          avatarUrl: activity.actor_avatar_url,
         })),
       })),
     };
