@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import { sqlOfficeRepository } from "@/server/repositories/sql/office-repository";
+import { officeRepository } from "@/server/repositories/office-repository";
 import type { Executor } from "@/server/db/query";
 import type { TenantScope } from "@/server/db/tenant";
 import {
@@ -32,7 +32,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql office repository", () => {
     scope: TenantScope,
     overrides: Partial<{ name: string; code: string; radiusMeters: number; latitude: number; longitude: number; status: "ACTIVE" | "INACTIVE" }> = {},
   ) {
-    return sqlOfficeRepository.create(scope, {
+    return officeRepository.create(scope, {
       name: overrides.name ?? "Head Office",
       code: overrides.code ?? `HQ-${Math.random().toString(36).slice(2, 7)}`,
       addressLine: "1 Test Street",
@@ -106,15 +106,15 @@ describe.skipIf(!hasSqlTestDatabase)("sql office repository", () => {
   describe("tenant isolation", () => {
     it("cannot read another tenant's office", async () => {
       const office = await createOffice(betaScope);
-      expect(await sqlOfficeRepository.findById(alphaScope, office.id)).toBeNull();
+      expect(await officeRepository.findById(alphaScope, office.id)).toBeNull();
     });
 
     it("cannot update another tenant's office", async () => {
       const office = await createOffice(betaScope, { name: "Beta HQ" });
 
-      expect(await sqlOfficeRepository.update(alphaScope, office.id, { name: "Hijacked" })).toBeNull();
+      expect(await officeRepository.update(alphaScope, office.id, { name: "Hijacked" })).toBeNull();
 
-      const untouched = await sqlOfficeRepository.findById(betaScope, office.id);
+      const untouched = await officeRepository.findById(betaScope, office.id);
       expect(untouched?.name).toBe("Beta HQ");
     });
 
@@ -122,7 +122,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql office repository", () => {
       const office = await createOffice(betaScope, { radiusMeters: 100 });
       const zone = office.geofences[0]!;
 
-      const updated = await sqlOfficeRepository.updateGeofence(alphaScope, zone.id, {
+      const updated = await officeRepository.updateGeofence(alphaScope, zone.id, {
         name: zone.name,
         latitude: zone.latitude,
         longitude: zone.longitude,
@@ -133,13 +133,13 @@ describe.skipIf(!hasSqlTestDatabase)("sql office repository", () => {
 
       expect(updated).toBe(false);
 
-      const after = await sqlOfficeRepository.findById(betaScope, office.id);
+      const after = await officeRepository.findById(betaScope, office.id);
       expect(after?.geofences[0]?.radiusMeters).toBe(100);
     });
 
     it("cannot read another tenant's zone through the office join", async () => {
       const office = await createOffice(betaScope);
-      expect(await sqlOfficeRepository.findGeofence(alphaScope, office.geofences[0]!.id)).toBeNull();
+      expect(await officeRepository.findGeofence(alphaScope, office.geofences[0]!.id)).toBeNull();
     });
   });
 
@@ -148,7 +148,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql office repository", () => {
       const office = await createOffice(alphaScope, { name: "Guntur HQ" });
       const employee = await createEmployee(alpha, office.id);
 
-      const zones = await sqlOfficeRepository.listZonesForEmployee(alphaScope, employee);
+      const zones = await officeRepository.listZonesForEmployee(alphaScope, employee);
 
       expect(zones).toHaveLength(1);
       expect(zones[0]?.officeName).toBe("Guntur HQ");
@@ -169,7 +169,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql office repository", () => {
         [employee, secondary.id],
       );
 
-      const zones = await sqlOfficeRepository.listZonesForEmployee(alphaScope, employee);
+      const zones = await officeRepository.listZonesForEmployee(alphaScope, employee);
       expect(zones.map((zone) => zone.officeName).sort()).toEqual(["Guntur HQ", "Hyderabad"]);
     });
 
@@ -178,23 +178,23 @@ describe.skipIf(!hasSqlTestDatabase)("sql office repository", () => {
 
       // An empty set is meaningful: the verification engine refuses the
       // check-in rather than falling back to something permissive.
-      expect(await sqlOfficeRepository.listZonesForEmployee(alphaScope, employee)).toEqual([]);
+      expect(await officeRepository.listZonesForEmployee(alphaScope, employee)).toEqual([]);
     });
 
     it("excludes inactive offices", async () => {
       const office = await createOffice(alphaScope, { status: "INACTIVE" });
       const employee = await createEmployee(alpha, office.id);
 
-      expect(await sqlOfficeRepository.listZonesForEmployee(alphaScope, employee)).toEqual([]);
+      expect(await officeRepository.listZonesForEmployee(alphaScope, employee)).toEqual([]);
     });
 
     it("excludes deactivated zones", async () => {
       const office = await createOffice(alphaScope);
       const employee = await createEmployee(alpha, office.id);
 
-      await sqlOfficeRepository.deleteGeofence(alphaScope, office.geofences[0]!.id);
+      await officeRepository.deleteGeofence(alphaScope, office.geofences[0]!.id);
 
-      expect(await sqlOfficeRepository.listZonesForEmployee(alphaScope, employee)).toEqual([]);
+      expect(await officeRepository.listZonesForEmployee(alphaScope, employee)).toEqual([]);
     });
 
     it("returns nothing for an employee in another tenant", async () => {
@@ -203,7 +203,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql office repository", () => {
 
       // The most important assertion in this file: asking about another
       // organisation's employee must not reveal that organisation's perimeters.
-      expect(await sqlOfficeRepository.listZonesForEmployee(alphaScope, employee)).toEqual([]);
+      expect(await officeRepository.listZonesForEmployee(alphaScope, employee)).toEqual([]);
     });
   });
 
@@ -212,7 +212,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql office repository", () => {
       const office = await createOffice(alphaScope);
 
       await expect(
-        sqlOfficeRepository.createGeofence(alphaScope, office.id, {
+        officeRepository.createGeofence(alphaScope, office.id, {
           name: "Annexe",
           ...GUNTUR,
           radiusMeters: 80,
@@ -225,9 +225,9 @@ describe.skipIf(!hasSqlTestDatabase)("sql office repository", () => {
     it("allows a second zone once the first is demoted", async () => {
       const office = await createOffice(alphaScope);
 
-      await sqlOfficeRepository.clearPrimaryFlag(alphaScope, office.id);
+      await officeRepository.clearPrimaryFlag(alphaScope, office.id);
       await expect(
-        sqlOfficeRepository.createGeofence(alphaScope, office.id, {
+        officeRepository.createGeofence(alphaScope, office.id, {
           name: "Annexe",
           ...GUNTUR,
           radiusMeters: 80,
@@ -236,17 +236,17 @@ describe.skipIf(!hasSqlTestDatabase)("sql office repository", () => {
         }),
       ).resolves.toBeTruthy();
 
-      const after = await sqlOfficeRepository.requireById(alphaScope, office.id);
+      const after = await officeRepository.requireById(alphaScope, office.id);
       expect(after.geofences).toHaveLength(2);
       expect(after.geofences.filter((zone) => zone.isPrimary)).toHaveLength(1);
     });
 
     it("counts active zones, so the last one can be protected", async () => {
       const office = await createOffice(alphaScope);
-      expect(await sqlOfficeRepository.countActiveZones(alphaScope, office.id)).toBe(1);
+      expect(await officeRepository.countActiveZones(alphaScope, office.id)).toBe(1);
 
-      await sqlOfficeRepository.deleteGeofence(alphaScope, office.geofences[0]!.id);
-      expect(await sqlOfficeRepository.countActiveZones(alphaScope, office.id)).toBe(0);
+      await officeRepository.deleteGeofence(alphaScope, office.geofences[0]!.id);
+      expect(await officeRepository.countActiveZones(alphaScope, office.id)).toBe(0);
     });
   });
 
@@ -257,9 +257,9 @@ describe.skipIf(!hasSqlTestDatabase)("sql office repository", () => {
       await createEmployee(alpha, office.id);
       await createEmployee(alpha, null);
 
-      expect(await sqlOfficeRepository.countAssignedEmployees(alphaScope, office.id)).toBe(2);
+      expect(await officeRepository.countAssignedEmployees(alphaScope, office.id)).toBe(2);
 
-      const loaded = await sqlOfficeRepository.requireById(alphaScope, office.id);
+      const loaded = await officeRepository.requireById(alphaScope, office.id);
       expect(loaded.assignedEmployeeCount).toBe(2);
     });
   });
@@ -269,24 +269,24 @@ describe.skipIf(!hasSqlTestDatabase)("sql office repository", () => {
       await createOffice(alphaScope, { code: "A", status: "ACTIVE" });
       await createOffice(alphaScope, { code: "B", status: "INACTIVE" });
 
-      expect(await sqlOfficeRepository.list(alphaScope, true)).toHaveLength(2);
-      expect(await sqlOfficeRepository.list(alphaScope, false)).toHaveLength(1);
+      expect(await officeRepository.list(alphaScope, true)).toHaveLength(2);
+      expect(await officeRepository.list(alphaScope, false)).toHaveLength(1);
     });
 
     it("lists only this tenant's offices", async () => {
       await createOffice(alphaScope, { name: "Alpha HQ" });
       await createOffice(betaScope, { name: "Beta HQ" });
 
-      const offices = await sqlOfficeRepository.list(alphaScope);
+      const offices = await officeRepository.list(alphaScope);
       expect(offices).toHaveLength(1);
       expect(offices[0]?.name).toBe("Alpha HQ");
     });
 
     it("returns an empty array, not [null], for an office with no active zone", async () => {
       const office = await createOffice(alphaScope);
-      await sqlOfficeRepository.deleteGeofence(alphaScope, office.geofences[0]!.id);
+      await officeRepository.deleteGeofence(alphaScope, office.geofences[0]!.id);
 
-      const reloaded = await sqlOfficeRepository.requireById(alphaScope, office.id);
+      const reloaded = await officeRepository.requireById(alphaScope, office.id);
       expect(reloaded.geofences).toEqual([]);
     });
   });

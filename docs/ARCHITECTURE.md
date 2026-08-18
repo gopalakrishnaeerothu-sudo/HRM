@@ -1,7 +1,10 @@
 # TaskFlow HR — architecture
 
 A multi-tenant HRM, task-management and geofenced-attendance platform.
-Next.js 15 (App Router) · TypeScript · PostgreSQL via Prisma · deployed on Railway.
+Next.js 15 (App Router) · TypeScript · PostgreSQL · deployed on Railway.
+
+Data access is migrating from Prisma to plain SQL over the `pg` driver. See
+§4 for what is done and what is not.
 
 ---
 
@@ -33,7 +36,8 @@ from the server session and each dashboard's queries carry their own scope.
       Repositories  ◄──── TenantScope: every query filtered by organizationId
             │
             ▼
-         Prisma  ──►  PostgreSQL
+      pg driver  ──►  PostgreSQL
+     (plain SQL)
 ```
 
 Rules the layering enforces:
@@ -124,7 +128,67 @@ filters on it:
 
 ---
 
-## 4. Multi-tenancy
+## 4. Database access: migrating to plain SQL
+
+The target architecture has no ORM: repositories issue SQL through the `pg`
+driver, and the schema is defined by numbered migration files.
+
+**Current state, accurately.** The migration is partly done. All repositories
+have been ported and live in `src/server/repositories/sql/`, backed by 101
+integration tests against a real PostgreSQL instance. The seed is plain SQL.
+But the SERVICE layer still calls the older Prisma repositories, so Prisma is
+still installed and still executing queries at runtime. Both layers point at
+the same database, which is why the application builds and the suite passes.
+
+Remaining to finish the removal: move the services onto the SQL repositories
+(~64 `client(scope)` call sites, plus 13 files querying Prisma directly), then
+delete `prisma/`, `@prisma/client`, the dependency and `src/lib/db.ts`. Until
+that lands, `npm ls prisma` still resolves.
+
+### Migrations
+
+`migrations/NNN_description.sql` — plain SQL, sequential, forward-only, one
+logical change per file. Applied by `scripts/migrate.mjs`:
+
+```
+npm run db:migrate          apply anything pending
+npm run db:migrate status   show what is applied
+```
+
+The runner records each file in `schema_migrations` with a SHA-256 checksum and
+refuses to run if an already-applied file has changed — migrations are history,
+not source you edit. Each migration runs inside its own transaction together
+with its tracking row, so a failure leaves no half-applied schema and no false
+record of success.
+
+Checksums are taken over content with line endings normalised. Hashing raw
+bytes made a Windows checkout report all fifteen migrations as modified, which
+is a false alarm that teaches people to ignore the one warning that matters.
+
+### Why not an ORM
+
+The queries this application actually needs are the ones ORMs express worst: a
+recursive CTE for the reporting tree, a GiST exclusion constraint for
+overlapping leave, `json_agg` to nest members in a single round trip, and
+`ON CONFLICT` to make concurrent check-ins collapse into one row. Writing them
+directly means the database enforces the invariants rather than the
+application hoping to.
+
+### Rules
+
+- **Parameterised queries only.** Never interpolate a value into SQL. Note that
+  parameterisation prevents injection but does NOT stop `%` and `_` being read
+  as wildcards inside a LIKE pattern — search paths use `likePattern()` and
+  `ESCAPE ''`.
+- **Identifiers** that must be dynamic (sort columns) go through an allow-list,
+  never straight from a request.
+- **Every repository takes a `TenantScope`** and folds `organizationId` into
+  the query, including through join tables that carry no tenant column of their
+  own — there the join IS the boundary.
+- **Executors are explicit.** Every repository accepts one, so a call can be
+  made to run inside a caller's transaction rather than silently outside it.
+
+## 5. Multi-tenancy
 
 The isolation mechanism is `TenantScope` in `repositories/tenant.ts`:
 
@@ -171,7 +235,7 @@ position is that it should be turned on deliberately rather than assumed.
 
 ---
 
-## 5. Geolocation
+## 6. Geolocation
 
 ### The rule
 
@@ -267,7 +331,7 @@ added as extra flags without a schema change.
 
 ---
 
-## 6. Security
+## 7. Security
 
 ### Every mutation
 
@@ -290,7 +354,7 @@ resolves to nothing.
 ### Error handling
 
 `toPublicError` maps anything thrown into a safe shape. Unknown errors are
-logged server-side and returned as a generic 500 — a Prisma error message can
+logged server-side and returned as a generic 500 — a database error message can
 contain a connection string or row contents. No stack trace ever reaches a
 browser.
 
@@ -312,7 +376,7 @@ path to `audit_logs` anywhere in the codebase.
 
 ---
 
-## 7. Routes
+## 8. Routes
 
 | Path | Purpose |
 |---|---|
@@ -336,7 +400,7 @@ path to `audit_logs` anywhere in the codebase.
 
 ---
 
-## 8. Design system
+## 9. Design system
 
 Tokens live in `src/app/globals.css`. Nothing hard-codes a colour.
 
@@ -366,7 +430,7 @@ visible. Pinch-zoom is not capped.
 
 ---
 
-## 9. Deployment
+## 10. Deployment
 
 ```
    GitHub ──► Railway ──┬── Application (Next.js)
@@ -390,7 +454,7 @@ reach the browser.
 
 ### Release
 
-`npm run release` = `prisma migrate deploy && tsx prisma/seed.ts --if-empty`.
+`npm run release` = `node scripts/migrate.mjs && tsx seed/seed.ts --if-empty`.
 Migrations run before the container takes traffic; the seed populates a
 brand-new database once and no-ops afterwards.
 
@@ -402,13 +466,13 @@ so Railway replaces it. It reveals nothing about the database beyond up/down.
 
 ---
 
-## 10. What is not built
+## 11. What is not built
 
 Stated plainly rather than stubbed:
 
 | Area | Status |
 |---|---|
-| **Authentication** | Interface and dev adapter only. See `src/server/auth/README.md`. This is deliberate — the brief asked for an auth-ready boundary, not fake OAuth. |
+| **Authentication** | **Intentionally deferred.** Interface and dev adapter only — see `src/server/auth/README.md`. There is no login page, no password authentication, no OAuth, no OTP and no production sessions, because the current architecture requirement excludes them at this stage. This is a boundary, not a stub pretending to be authentication: `AuthAdapter` defines the contract, so adopting a real strategy later means supplying one implementation rather than changing the application. A previous attempt at password authentication was reverted for this reason; it remains recoverable on the `production-auth-v2` branch. |
 | **File uploads** | `task_attachments` exists and renders; no upload endpoint. Gated on `STORAGE_URL`. |
 | **PDF export** | CSV export is implemented and audited (§ below). PDF is not. |
 | **Email / push** | `notifications` carries `channel` and `sentAt`; only `IN_APP` is delivered. `deliver()` in `notification-service.ts` is the seam. |
@@ -436,7 +500,7 @@ Everything below runs end to end, exercised by `scripts/smoke-test.mjs`:
   caller's visibility envelope, audited as `EXPORT`, with spreadsheet
   formula-injection neutralised and a UTF-8 BOM for Excel.
 
-## 11. Testing
+## 12. Testing
 
 | Layer | Location | Runs |
 |---|---|---|

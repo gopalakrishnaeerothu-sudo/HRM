@@ -4,7 +4,7 @@ A multi-tenant HRM, task-management and **geofenced attendance** platform.
 
 > One workspace for your people, tasks and attendance.
 
-Next.js 15 · TypeScript · PostgreSQL (Prisma) · Tailwind v4 · Railway
+Next.js 15 · TypeScript · PostgreSQL · Tailwind v4 · Railway
 
 `TaskFlow HR` is a working name. It lives in one place — `src/lib/branding.ts`,
 fed by `NEXT_PUBLIC_APP_NAME` — so renaming the product needs no code changes.
@@ -97,7 +97,7 @@ see [`src/server/auth/README.md`](src/server/auth/README.md).
    Do **not** set `DEV_AUTH_ENABLED`.
 
 4. **Deploy.** `railway.json` and `nixpacks.toml` handle the rest: build,
-   `prisma migrate deploy`, seed-if-empty, then start. Health checks hit
+   `node scripts/migrate.mjs`, seed-if-empty, then start. Health checks hit
    `/api/health`, which verifies the database is actually reachable.
 
 A `Dockerfile` is included for container deploys elsewhere; Railway's default
@@ -108,7 +108,9 @@ Nixpacks path does not need it.
 ## Architecture in one page
 
 ```
-Server Components → Services → Repositories → Prisma → PostgreSQL
+Server Components → Services → Repositories → PostgreSQL
+
+(Repositories are migrating from Prisma to plain SQL — see docs/ARCHITECTURE.md §4.)
                         ▲            ▲
                 auth boundary   TenantScope (organizationId on every query)
 ```

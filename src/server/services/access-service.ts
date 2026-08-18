@@ -5,7 +5,7 @@ import { errors } from "@/lib/errors";
 import { isOrgWideRole } from "@/server/auth/permissions";
 import { employeeRepository } from "@/server/repositories/employee-repository";
 import { teamRepository } from "@/server/repositories/org-repository";
-import type { TenantScope } from "@/server/repositories/tenant";
+import type { TenantScope } from "@/server/db/tenant";
 
 /**
  * Visibility scoping.

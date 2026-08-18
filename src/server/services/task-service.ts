@@ -11,7 +11,7 @@ import { STATUS_IMPLIED_PROGRESS, TASK_PRIORITY_LABELS, TASK_STATUS_LABELS } fro
 import type { AuthSession } from "@/server/auth/types";
 import { hasPermission } from "@/server/auth/permissions";
 import { taskRepository, type TaskDetail, type TaskSummary } from "@/server/repositories/task-repository";
-import { assertBelongsToTenant, type TenantScope } from "@/server/repositories/tenant";
+import { assertBelongsToTenant, type TenantScope } from "@/server/db/tenant";
 import { resolveVisibleEmployeeIds, tenantScopeFor } from "@/server/services/access-service";
 import { notificationService } from "@/server/services/notification-service";
 

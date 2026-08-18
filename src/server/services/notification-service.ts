@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db";
 import type { AuthSession } from "@/server/auth/types";
 import { notificationRepository } from "@/server/repositories/org-repository";
 import type { TaskDetail, TaskSummary } from "@/server/repositories/task-repository";
-import type { TenantScope } from "@/server/repositories/tenant";
+import type { TenantScope } from "@/server/db/tenant";
 
 /**
  * Notification fan-out.

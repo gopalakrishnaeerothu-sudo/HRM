@@ -10,7 +10,7 @@ import { formatDate } from "@/lib/time";
 import type { EmployeeQuery } from "@/lib/validation/employee";
 import { EMPLOYEE_STATUS_LABELS, EMPLOYMENT_TYPE_LABELS } from "@/lib/validation/employee";
 import type { EmployeeSummary } from "@/server/repositories/employee-repository";
-import type { Paginated } from "@/server/repositories/tenant";
+import type { Paginated } from "@/server/db/tenant";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

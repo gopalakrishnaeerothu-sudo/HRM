@@ -5,7 +5,7 @@ import { errors } from "@/lib/errors";
 import type { CreateEmployeeInput, EmployeeQuery, UpdateEmployeeInput } from "@/lib/validation/employee";
 import type { AuthSession } from "@/server/auth/types";
 import { employeeRepository } from "@/server/repositories/employee-repository";
-import { assertBelongsToTenant } from "@/server/repositories/tenant";
+import { assertBelongsToTenant } from "@/server/db/tenant";
 import { assertCanViewEmployee, resolveVisibleEmployeeIds, tenantScopeFor } from "@/server/services/access-service";
 import { auditService, diff } from "@/server/services/audit-service";
 

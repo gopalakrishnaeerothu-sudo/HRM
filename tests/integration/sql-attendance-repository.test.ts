@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Executor } from "@/server/db/query";
 import type { TenantScope } from "@/server/db/tenant";
-import { sqlAttendanceRepository, toDateKey } from "@/server/repositories/sql/attendance-repository";
+import { attendanceRepository, toDateKey } from "@/server/repositories/attendance-repository";
 
 import {
   createSqlTenant,
@@ -66,7 +66,7 @@ describeSql("sql attendance repository", () => {
 
   describe("the day's record", () => {
     it("creates one record for a check-in", async () => {
-      const record = await sqlAttendanceRepository.upsertRecord(scope, employeeId, DAY, {
+      const record = await attendanceRepository.upsertRecord(scope, employeeId, DAY, {
         checkInAt: new Date("2026-03-11T09:05:00.000Z"),
         status: "PRESENT",
         lateByMinutes: 5,
@@ -79,7 +79,7 @@ describeSql("sql attendance repository", () => {
     });
 
     it("stores the date as the calendar day, not a local-midnight shift", async () => {
-      const record = await sqlAttendanceRepository.upsertRecord(scope, employeeId, DAY, {
+      const record = await attendanceRepository.upsertRecord(scope, employeeId, DAY, {
         status: "PRESENT",
       });
 
@@ -90,12 +90,12 @@ describeSql("sql attendance repository", () => {
 
     it("checking out does not erase the check-in", async () => {
       const checkIn = new Date("2026-03-11T09:00:00.000Z");
-      await sqlAttendanceRepository.upsertRecord(scope, employeeId, DAY, {
+      await attendanceRepository.upsertRecord(scope, employeeId, DAY, {
         checkInAt: checkIn,
         status: "PRESENT",
       });
 
-      const after = await sqlAttendanceRepository.upsertRecord(scope, employeeId, DAY, {
+      const after = await attendanceRepository.upsertRecord(scope, employeeId, DAY, {
         checkOutAt: new Date("2026-03-11T17:30:00.000Z"),
         status: "PRESENT",
         workedMinutes: 510,
@@ -110,11 +110,11 @@ describeSql("sql attendance repository", () => {
       // The unique constraint, not the application, is what prevents the
       // duplicate. Firing both without awaiting the first proves it.
       await Promise.all([
-        sqlAttendanceRepository.upsertRecord(scope, employeeId, DAY, {
+        attendanceRepository.upsertRecord(scope, employeeId, DAY, {
           checkInAt: new Date("2026-03-11T09:00:00.000Z"),
           status: "PRESENT",
         }),
-        sqlAttendanceRepository.upsertRecord(scope, employeeId, DAY, {
+        attendanceRepository.upsertRecord(scope, employeeId, DAY, {
           checkInAt: new Date("2026-03-11T09:00:01.000Z"),
           status: "PRESENT",
         }),
@@ -129,9 +129,9 @@ describeSql("sql attendance repository", () => {
     });
 
     it("does not return another tenant's record", async () => {
-      await sqlAttendanceRepository.upsertRecord(scope, employeeId, DAY, { status: "PRESENT" });
+      await attendanceRepository.upsertRecord(scope, employeeId, DAY, { status: "PRESENT" });
 
-      const found = await sqlAttendanceRepository.findRecord(
+      const found = await attendanceRepository.findRecord(
         scopeFor(otherOrgId),
         employeeId,
         DAY,
@@ -143,7 +143,7 @@ describeSql("sql attendance repository", () => {
 
   describe("location events", () => {
     it("records a refused attempt even though no attendance record exists", async () => {
-      await sqlAttendanceRepository.createEvent(scope, {
+      await attendanceRepository.createEvent(scope, {
         employeeId,
         type: "CHECK_IN",
         verification: "OUTSIDE_GEOFENCE",
@@ -153,17 +153,17 @@ describeSql("sql attendance repository", () => {
         riskFlags: ["OUTSIDE_RADIUS"],
       });
 
-      const record = await sqlAttendanceRepository.findRecord(scope, employeeId, DAY);
+      const record = await attendanceRepository.findRecord(scope, employeeId, DAY);
       expect(record).toBeNull();
 
-      const flagged = await sqlAttendanceRepository.listFlaggedEvents(scope);
+      const flagged = await attendanceRepository.listFlaggedEvents(scope);
       expect(flagged).toHaveLength(1);
       expect(flagged[0]!.verification).toBe("OUTSIDE_GEOFENCE");
       expect(flagged[0]!.riskFlags).toEqual(["OUTSIDE_RADIUS"]);
     });
 
     it("never uses a rejected fix as the impossible-travel baseline", async () => {
-      await sqlAttendanceRepository.createEvent(scope, {
+      await attendanceRepository.createEvent(scope, {
         employeeId,
         type: "CHECK_IN",
         verification: "VERIFIED",
@@ -173,7 +173,7 @@ describeSql("sql attendance repository", () => {
       });
 
       // Later in time, but rejected — it must not displace the verified fix.
-      await sqlAttendanceRepository.createEvent(scope, {
+      await attendanceRepository.createEvent(scope, {
         employeeId,
         type: "CHECK_IN",
         verification: "SUSPECTED_SPOOF",
@@ -182,7 +182,7 @@ describeSql("sql attendance repository", () => {
         occurredAt: new Date("2026-03-11T09:02:00.000Z"),
       });
 
-      const last = await sqlAttendanceRepository.findLastAcceptedFix(scope, employeeId);
+      const last = await attendanceRepository.findLastAcceptedFix(scope, employeeId);
 
       expect(last).not.toBeNull();
       expect(last!.latitude).toBeCloseTo(17.385, 3);
@@ -190,7 +190,7 @@ describeSql("sql attendance repository", () => {
     });
 
     it("ignores a verified fix belonging to another tenant", async () => {
-      await sqlAttendanceRepository.createEvent(scope, {
+      await attendanceRepository.createEvent(scope, {
         employeeId,
         type: "CHECK_IN",
         verification: "VERIFIED",
@@ -198,7 +198,7 @@ describeSql("sql attendance repository", () => {
         longitude: 78.4867,
       });
 
-      const last = await sqlAttendanceRepository.findLastAcceptedFix(
+      const last = await attendanceRepository.findLastAcceptedFix(
         scopeFor(otherOrgId),
         employeeId,
       );
@@ -208,18 +208,18 @@ describeSql("sql attendance repository", () => {
 
     it("counts recent attempts for the burst check", async () => {
       for (let index = 0; index < 3; index += 1) {
-        await sqlAttendanceRepository.createEvent(scope, {
+        await attendanceRepository.createEvent(scope, {
           employeeId,
           type: "CHECK_IN",
           verification: "OUTSIDE_GEOFENCE",
         });
       }
 
-      expect(await sqlAttendanceRepository.countRecentEvents(scope, employeeId, 300)).toBe(3);
+      expect(await attendanceRepository.countRecentEvents(scope, employeeId, 300)).toBe(3);
     });
 
     it("refuses to update an event once written", async () => {
-      const id = await sqlAttendanceRepository.createEvent(scope, {
+      const id = await attendanceRepository.createEvent(scope, {
         employeeId,
         type: "CHECK_IN",
         verification: "OUTSIDE_GEOFENCE",
@@ -237,7 +237,7 @@ describeSql("sql attendance repository", () => {
     let recordId: string;
 
     beforeEach(async () => {
-      const record = await sqlAttendanceRepository.upsertRecord(scope, employeeId, DAY, {
+      const record = await attendanceRepository.upsertRecord(scope, employeeId, DAY, {
         checkInAt: new Date("2026-03-11T09:00:00.000Z"),
         status: "PRESENT",
       });
@@ -245,17 +245,17 @@ describeSql("sql attendance repository", () => {
     });
 
     it("starts, finds and ends a break", async () => {
-      const breakId = await sqlAttendanceRepository.startBreak(scope, {
+      const breakId = await attendanceRepository.startBreak(scope, {
         employeeId,
         attendanceRecordId: recordId,
         startedAt: new Date("2026-03-11T13:00:00.000Z"),
         reason: "Lunch",
       });
 
-      const open = await sqlAttendanceRepository.findOpenBreak(scope, recordId);
+      const open = await attendanceRepository.findOpenBreak(scope, recordId);
       expect(open?.id).toBe(breakId);
 
-      const ended = await sqlAttendanceRepository.endBreak(
+      const ended = await attendanceRepository.endBreak(
         scope,
         breakId,
         new Date("2026-03-11T13:35:00.000Z"),
@@ -263,27 +263,27 @@ describeSql("sql attendance repository", () => {
       );
 
       expect(ended).toBe(true);
-      expect(await sqlAttendanceRepository.findOpenBreak(scope, recordId)).toBeNull();
-      expect(await sqlAttendanceRepository.totalBreakMinutes(scope, recordId)).toBe(35);
+      expect(await attendanceRepository.findOpenBreak(scope, recordId)).toBeNull();
+      expect(await attendanceRepository.totalBreakMinutes(scope, recordId)).toBe(35);
     });
 
     it("will not end the same break twice", async () => {
-      const breakId = await sqlAttendanceRepository.startBreak(scope, {
+      const breakId = await attendanceRepository.startBreak(scope, {
         employeeId,
         attendanceRecordId: recordId,
         startedAt: new Date("2026-03-11T13:00:00.000Z"),
       });
 
-      await sqlAttendanceRepository.endBreak(scope, breakId, new Date(), 30);
+      await attendanceRepository.endBreak(scope, breakId, new Date(), 30);
       // A second call must not add another 30 minutes to the day.
-      const again = await sqlAttendanceRepository.endBreak(scope, breakId, new Date(), 30);
+      const again = await attendanceRepository.endBreak(scope, breakId, new Date(), 30);
 
       expect(again).toBe(false);
-      expect(await sqlAttendanceRepository.totalBreakMinutes(scope, recordId)).toBe(30);
+      expect(await attendanceRepository.totalBreakMinutes(scope, recordId)).toBe(30);
     });
 
     it("returns zero break minutes for a day with no breaks", async () => {
-      expect(await sqlAttendanceRepository.totalBreakMinutes(scope, recordId)).toBe(0);
+      expect(await attendanceRepository.totalBreakMinutes(scope, recordId)).toBe(0);
     });
   });
 
@@ -291,15 +291,15 @@ describeSql("sql attendance repository", () => {
     beforeEach(async () => {
       const second = await seedEmployee(orgId, "EMP-2", "Vikram");
 
-      await sqlAttendanceRepository.upsertRecord(scope, employeeId, DAY, {
+      await attendanceRepository.upsertRecord(scope, employeeId, DAY, {
         status: "PRESENT",
         workedMinutes: 480,
       });
-      await sqlAttendanceRepository.upsertRecord(scope, second, DAY, {
+      await attendanceRepository.upsertRecord(scope, second, DAY, {
         status: "LATE",
         lateByMinutes: 22,
       });
-      await sqlAttendanceRepository.upsertRecord(
+      await attendanceRepository.upsertRecord(
         scope,
         employeeId,
         new Date("2026-03-12T00:00:00.000Z"),
@@ -308,7 +308,7 @@ describeSql("sql attendance repository", () => {
     });
 
     it("paginates newest day first", async () => {
-      const page = await sqlAttendanceRepository.list(scope, {}, 1, 2);
+      const page = await attendanceRepository.list(scope, {}, 1, 2);
 
       expect(page.total).toBe(3);
       expect(page.items).toHaveLength(2);
@@ -318,13 +318,13 @@ describeSql("sql attendance repository", () => {
     });
 
     it("filters to a single day", async () => {
-      const page = await sqlAttendanceRepository.list(scope, { from: DAY, to: DAY }, 1, 20);
+      const page = await attendanceRepository.list(scope, { from: DAY, to: DAY }, 1, 20);
 
       expect(page.total).toBe(2);
     });
 
     it("counts by status for a day", async () => {
-      const counts = await sqlAttendanceRepository.countByStatusForDate(scope, DAY);
+      const counts = await attendanceRepository.countByStatusForDate(scope, DAY);
       const byStatus = Object.fromEntries(counts.map((row) => [row.status, row.count]));
 
       expect(byStatus.PRESENT).toBe(1);
@@ -332,7 +332,7 @@ describeSql("sql attendance repository", () => {
     });
 
     it("returns an empty page for another tenant", async () => {
-      const page = await sqlAttendanceRepository.list(scopeFor(otherOrgId), {}, 1, 20);
+      const page = await attendanceRepository.list(scopeFor(otherOrgId), {}, 1, 20);
 
       expect(page.total).toBe(0);
       expect(page.items).toEqual([]);
@@ -341,7 +341,7 @@ describeSql("sql attendance repository", () => {
     it("lists active employees who have not checked in", async () => {
       const third = await seedEmployee(orgId, "EMP-3", "Nadia");
 
-      const missing = await sqlAttendanceRepository.findEmployeesWithoutRecord(scope, DAY);
+      const missing = await attendanceRepository.findEmployeesWithoutRecord(scope, DAY);
 
       expect(missing.map((entry) => entry.id)).toEqual([third]);
     });

@@ -7,7 +7,7 @@ import { errors } from "@/lib/errors";
 import type { createTeamSchema, updateTeamSchema } from "@/lib/validation/organization";
 import type { AuthSession } from "@/server/auth/types";
 import { teamRepository } from "@/server/repositories/org-repository";
-import { assertBelongsToTenant } from "@/server/repositories/tenant";
+import { assertBelongsToTenant } from "@/server/db/tenant";
 import { auditService, diff } from "@/server/services/audit-service";
 import { tenantScopeFor } from "@/server/services/access-service";
 

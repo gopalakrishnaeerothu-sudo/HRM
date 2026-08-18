@@ -5,7 +5,7 @@ import { headers } from "next/headers";
 
 import type { AuthSession } from "@/server/auth/types";
 import { auditRepository } from "@/server/repositories/org-repository";
-import type { TenantScope } from "@/server/repositories/tenant";
+import type { TenantScope } from "@/server/db/tenant";
 
 /**
  * Audit logging for sensitive operations.

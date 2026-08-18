@@ -13,7 +13,7 @@ import { verifyLocation, type VerificationResult } from "@/server/geo/verify";
 import { attendanceRepository } from "@/server/repositories/attendance-repository";
 import { officeRepository } from "@/server/repositories/office-repository";
 import { organizationRepository } from "@/server/repositories/org-repository";
-import type { TenantScope } from "@/server/repositories/tenant";
+import type { TenantScope } from "@/server/db/tenant";
 import { auditService } from "@/server/services/audit-service";
 import { computeDay, liveWorkedMinutes, type WorkdayPolicy } from "@/server/services/attendance-rules";
 import { consume, RATE_LIMITS, rateLimitKey } from "@/server/services/rate-limit";

@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import { sqlEmployeeRepository } from "@/server/repositories/sql/employee-repository";
+import { employeeRepository } from "@/server/repositories/employee-repository";
 import type { Executor } from "@/server/db/query";
 import type { TenantScope } from "@/server/db/tenant";
 import {
@@ -83,14 +83,14 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
     it("reads its own employee", async () => {
       const id = await insertEmployee(alpha, { firstName: "Priya", lastName: "Nair" });
 
-      const found = await sqlEmployeeRepository.findById(alphaScope, id);
+      const found = await employeeRepository.findById(alphaScope, id);
       expect(found?.firstName).toBe("Priya");
     });
 
     it("cannot read another tenant's employee", async () => {
       const id = await insertEmployee(beta);
 
-      expect(await sqlEmployeeRepository.findById(alphaScope, id)).toBeNull();
+      expect(await employeeRepository.findById(alphaScope, id)).toBeNull();
     });
 
     it("lists only its own employees", async () => {
@@ -98,7 +98,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
       await insertEmployee(alpha, { firstName: "Alpha2" });
       await insertEmployee(beta, { firstName: "Beta" });
 
-      const result = await sqlEmployeeRepository.list(alphaScope, {
+      const result = await employeeRepository.list(alphaScope, {
         page: 1,
         pageSize: 50,
         sortBy: "name",
@@ -113,7 +113,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
       const id = await insertEmployee(beta, { designation: "Engineer" });
 
       await expect(
-        sqlEmployeeRepository.update(alphaScope, id, { designation: "Hijacked" }),
+        employeeRepository.update(alphaScope, id, { designation: "Hijacked" }),
       ).rejects.toThrow();
 
       const { rows } = await sqlTestPool().query<{ designation: string }>(
@@ -126,10 +126,10 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
     it("cannot soft-delete another tenant's employee", async () => {
       const id = await insertEmployee(beta);
 
-      expect(await sqlEmployeeRepository.softDelete(betaScope, id)).toBe(true);
+      expect(await employeeRepository.softDelete(betaScope, id)).toBe(true);
 
       const other = await insertEmployee(beta);
-      expect(await sqlEmployeeRepository.softDelete(alphaScope, other)).toBe(false);
+      expect(await employeeRepository.softDelete(alphaScope, other)).toBe(false);
     });
 
     it("allows the same employee code in two organisations", async () => {
@@ -156,7 +156,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
     });
 
     it("returns a complete envelope on the first page", async () => {
-      const page = await sqlEmployeeRepository.list(alphaScope, {
+      const page = await employeeRepository.list(alphaScope, {
         page: 1,
         pageSize: 5,
         sortBy: "name",
@@ -171,7 +171,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
     });
 
     it("reports the last page correctly", async () => {
-      const page = await sqlEmployeeRepository.list(alphaScope, {
+      const page = await employeeRepository.list(alphaScope, {
         page: 3,
         pageSize: 5,
         sortBy: "name",
@@ -189,7 +189,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
       const seen = new Set<string>();
 
       for (const page of [1, 2, 3]) {
-        const result = await sqlEmployeeRepository.list(alphaScope, {
+        const result = await employeeRepository.list(alphaScope, {
           page,
           pageSize: 5,
           sortBy: "name",
@@ -204,7 +204,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
     it("counts the filtered set, not the whole table", async () => {
       await insertEmployee(alpha, { firstName: "Zebra", code: "Z-1" });
 
-      const page = await sqlEmployeeRepository.list(alphaScope, {
+      const page = await employeeRepository.list(alphaScope, {
         page: 1,
         pageSize: 5,
         search: "Zebra",
@@ -236,7 +236,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
     });
 
     const search = (term: string) =>
-      sqlEmployeeRepository.list(alphaScope, {
+      employeeRepository.list(alphaScope, {
         page: 1,
         pageSize: 20,
         search: term,
@@ -283,7 +283,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
       const junior = await insertEmployee(alpha, { code: "J-1", firstName: "Junior", managerId: lead });
       await insertEmployee(alpha, { code: "U-1", firstName: "Unrelated" });
 
-      const reports = await sqlEmployeeRepository.listReportIds(alphaScope, head);
+      const reports = await employeeRepository.listReportIds(alphaScope, head);
 
       expect(reports).toHaveLength(2);
       expect(reports).toContain(lead);
@@ -292,7 +292,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
 
     it("returns nothing for someone with no reports", async () => {
       const solo = await insertEmployee(alpha, { code: "S-1" });
-      expect(await sqlEmployeeRepository.listReportIds(alphaScope, solo)).toEqual([]);
+      expect(await employeeRepository.listReportIds(alphaScope, solo)).toEqual([]);
     });
 
     it("terminates on a reporting cycle instead of recursing forever", async () => {
@@ -305,7 +305,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
         first,
       ]);
 
-      const reports = await sqlEmployeeRepository.listReportIds(alphaScope, first);
+      const reports = await employeeRepository.listReportIds(alphaScope, first);
       expect(reports).toContain(second);
       expect(reports.length).toBeLessThan(20);
     });
@@ -315,7 +315,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
       await insertEmployee(beta, { code: "B-1", managerId: head });
 
       // The FK permits this row; the organisation filter is what excludes it.
-      expect(await sqlEmployeeRepository.listReportIds(alphaScope, head)).toEqual([]);
+      expect(await employeeRepository.listReportIds(alphaScope, head)).toEqual([]);
     });
   });
 
@@ -326,7 +326,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
       await insertEmployee(alpha, { code: "A-3", status: "ON_LEAVE" });
       await insertEmployee(beta, { code: "B-2", status: "ACTIVE" });
 
-      const counts = await sqlEmployeeRepository.countByStatus(alphaScope);
+      const counts = await employeeRepository.countByStatus(alphaScope);
       const byStatus = new Map(counts.map((row) => [row.status, row.count]));
 
       expect(byStatus.get("ACTIVE")).toBe(2);
@@ -341,7 +341,7 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
       await insertEmployee(alpha, { code: "D-1", departmentId: rows[0]!.id });
       await insertEmployee(alpha, { code: "D-2" });
 
-      const counts = await sqlEmployeeRepository.countByDepartment(alphaScope);
+      const counts = await employeeRepository.countByDepartment(alphaScope);
       const byName = new Map(counts.map((row) => [row.name, row.count]));
 
       expect(byName.get("Engineering")).toBe(1);
@@ -351,8 +351,8 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
     it("detects a duplicate code within the tenant only", async () => {
       await insertEmployee(alpha, { code: "DUP-1" });
 
-      expect(await sqlEmployeeRepository.isCodeTaken(alphaScope, "DUP-1")).toBe(true);
-      expect(await sqlEmployeeRepository.isCodeTaken(betaScope, "DUP-1")).toBe(false);
+      expect(await employeeRepository.isCodeTaken(alphaScope, "DUP-1")).toBe(true);
+      expect(await employeeRepository.isCodeTaken(betaScope, "DUP-1")).toBe(false);
     });
 
     it("excludes the row being edited from its own uniqueness check", async () => {
@@ -360,8 +360,8 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
 
       // Otherwise saving a record without changing its code would report a
       // conflict with itself.
-      expect(await sqlEmployeeRepository.isCodeTaken(alphaScope, "SELF-1", id)).toBe(false);
-      expect(await sqlEmployeeRepository.isEmailTaken(alphaScope, "self@alpha.test", id)).toBe(false);
+      expect(await employeeRepository.isCodeTaken(alphaScope, "SELF-1", id)).toBe(false);
+      expect(await employeeRepository.isEmailTaken(alphaScope, "self@alpha.test", id)).toBe(false);
     });
   });
 
@@ -369,9 +369,9 @@ describe.skipIf(!hasSqlTestDatabase)("sql employee repository", () => {
     it("hides the row from reads but keeps it in the table", async () => {
       const id = await insertEmployee(alpha, { code: "SD-1" });
 
-      await sqlEmployeeRepository.softDelete(alphaScope, id);
+      await employeeRepository.softDelete(alphaScope, id);
 
-      expect(await sqlEmployeeRepository.findById(alphaScope, id)).toBeNull();
+      expect(await employeeRepository.findById(alphaScope, id)).toBeNull();
 
       const { rows } = await sqlTestPool().query(`SELECT deleted_at FROM employees WHERE id = $1`, [
         id,
