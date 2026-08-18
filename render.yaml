@@ -1,0 +1,50 @@
+# Render Blueprint.
+#
+# Render does not read nixpacks.toml or railway.json — this file replaces both.
+# It builds with Render's native Node runtime, not Docker, so Dockerfile.local
+# stays unused (Render only autodetects a file named exactly `Dockerfile`).
+#
+# Apply with: Render dashboard → New → Blueprint → point at this repo.
+
+databases:
+  - name: taskflow-hr-db
+    databaseName: taskflow_hr
+    user: taskflow
+    plan: free
+
+services:
+  - type: web
+    name: taskflow-hr
+    runtime: node
+    plan: free
+
+    # `--include=dev` is not redundant: Render sets NODE_ENV=production, under
+    # which npm omits devDependencies. The build needs them (typescript,
+    # tailwind) and so does the release phase — `db:seed` runs through tsx.
+    buildCommand: npm ci --include=dev && npm run build
+
+    # Migrate and seed before serving, so a deploy can never answer requests
+    # against an older schema. Both halves are idempotent: `migrate deploy`
+    # skips applied migrations, and `--if-empty` no-ops once data exists, so
+    # this is safe to re-run on every restart.
+    startCommand: npm run release && npm run start
+
+    healthCheckPath: /api/health
+
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: taskflow-hr-db
+          property: connectionString
+
+      - key: AUTH_SECRET
+        generateValue: true
+
+      # Must be set before the build, not after: Next inlines NEXT_PUBLIC_* at
+      # build time. `sync: false` makes Render prompt for it on first apply.
+      # Use the service's own URL, e.g. https://taskflow-hr.onrender.com
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
+
+      - key: NODE_VERSION
+        value: "20"
