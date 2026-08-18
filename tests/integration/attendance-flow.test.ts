@@ -4,7 +4,7 @@ import { offsetByMeters } from "@/server/geo/distance";
 import { verifyLocation, DEFAULT_POLICY } from "@/server/geo/verify";
 import { attendanceRepository, toDateKey } from "@/server/repositories/attendance-repository";
 import { officeRepository } from "@/server/repositories/office-repository";
-import type { TenantScope } from "@/server/repositories/tenant";
+import type { TenantScope } from "@/server/db/tenant";
 import { computeDay } from "@/server/services/attendance-rules";
 import {
   createTenant,
@@ -87,7 +87,6 @@ describe.skipIf(!hasTestDatabase)("attendance flow", () => {
         status: computed.status,
         lateByMinutes: computed.lateByMinutes,
       },
-      { checkInAt: now, status: computed.status },
     );
 
     expect(record.status).toBe("PRESENT");
@@ -169,14 +168,12 @@ describe.skipIf(!hasTestDatabase)("attendance flow", () => {
         tenant.employee.id,
         day,
         { checkInAt: day, status: "PRESENT" },
-        { status: "PRESENT" },
       ),
       attendanceRepository.upsertRecord(
         scope,
         tenant.employee.id,
         day,
         { checkInAt: day, status: "PRESENT" },
-        { status: "PRESENT" },
       ),
     ]).catch(() => {
       // A unique-violation from the losing upsert is an acceptable outcome;
@@ -266,7 +263,6 @@ describe.skipIf(!hasTestDatabase)("attendance flow", () => {
         breakMinutes: 45,
         overtimeMinutes: computed.overtimeMinutes,
       },
-      { checkOutAt: checkOut, status: computed.status, workedMinutes: computed.workedMinutes },
     );
 
     expect(record.status).toBe("PRESENT");

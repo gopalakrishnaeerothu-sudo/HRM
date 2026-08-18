@@ -3,8 +3,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { employeeRepository } from "@/server/repositories/employee-repository";
 import { officeRepository } from "@/server/repositories/office-repository";
 import { taskRepository } from "@/server/repositories/task-repository";
-import { assertBelongsToTenant } from "@/server/repositories/tenant";
-import type { TenantScope } from "@/server/repositories/tenant";
+import { assertBelongsToTenant } from "@/server/db/tenant";
+import type { TenantScope } from "@/server/db/tenant";
 import {
   createTenant,
   disconnectTestDb,
@@ -193,10 +193,24 @@ describe.skipIf(!hasTestDatabase)("tenant isolation", () => {
         }),
       ).resolves.toBeDefined();
 
-      const acmeNext = await taskRepository.nextReference(acmeScope);
-      const globexNext = await taskRepository.nextReference(globexScope);
-      expect(acmeNext).toBe(2);
-      expect(globexNext).toBe(2);
+      // The repository no longer exposes a nextReference() to read first —
+      // the number is allocated inside the INSERT, so two concurrent creations
+      // cannot both claim it. Assert the observable behaviour instead: each
+      // tenant continues its own sequence rather than a global one.
+      const acmeSecond = await taskRepository.create(acmeScope, {
+        title: "Acme second",
+        creatorId: acme.employee.id,
+      });
+      const globexSecond = await taskRepository.create(globexScope, {
+        title: "Globex second",
+        creatorId: globex.employee.id,
+      });
+
+      const acmeTask = await taskRepository.requireById(acmeScope, acmeSecond);
+      const globexTask = await taskRepository.requireById(globexScope, globexSecond);
+
+      expect(acmeTask.reference).toBe(2);
+      expect(globexTask.reference).toBe(2);
     });
 
     it("cannot read another tenant's task", async () => {
