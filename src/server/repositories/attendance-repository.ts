@@ -601,13 +601,15 @@ export const attendanceRepository = {
   // --- Breaks ---------------------------------------------------------------
 
   async findOpenBreak(scope: TenantScope, attendanceRecordId: string) {
-    return queryOne<{ id: string; started_at: Date }>(
+    const row = await queryOne<{ id: string; started_at: Date }>(
       `SELECT id, started_at FROM break_records
         WHERE organization_id = $1 AND attendance_record_id = $2 AND ended_at IS NULL
         ORDER BY started_at DESC LIMIT 1`,
       [scope.organizationId, attendanceRecordId],
       exec(scope),
     );
+
+    return row ? { id: row.id, startedAt: row.started_at } : null;
   },
 
   async startBreak(

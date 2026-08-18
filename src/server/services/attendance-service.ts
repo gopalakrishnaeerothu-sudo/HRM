@@ -9,6 +9,7 @@ import { zonedDateKey, zonedMinutesOfDay, zonedParts } from "@/lib/time";
 import type { LocationClaim } from "@/lib/validation/common";
 import type { OverrideAttendanceInput } from "@/lib/validation/attendance";
 import type { AuthSession } from "@/server/auth/types";
+import { transaction } from "@/server/db/transaction";
 import { verifyLocation, type VerificationResult } from "@/server/geo/verify";
 import { attendanceRepository } from "@/server/repositories/attendance-repository";
 import { officeRepository } from "@/server/repositories/office-repository";
@@ -102,7 +103,7 @@ export const attendanceService = {
     const dateKey = zonedDateKey(now, timezone);
 
     const [record, zones] = await Promise.all([
-      attendanceRepository.findRecordWithBreaks(scope, employee.id, dateKey),
+      attendanceRepository.findRecordWithDetail(scope, employee.id, dateKey),
       officeRepository.listZonesForEmployee(scope, employee.id),
     ]);
 
@@ -268,27 +269,19 @@ export const attendanceService = {
     });
 
     // One transaction so the record and its event cannot diverge.
-    const record = await prisma.$transaction(async (tx) => {
-      const txScope: TenantScope = { organizationId: scope.organizationId, db: tx };
+    const record = await transaction(async (tx) => {
+      const txScope: TenantScope = { organizationId: scope.organizationId, tx };
 
-      const saved = await attendanceRepository.upsertRecord(
-        txScope,
-        employee.id,
-        dateKey,
-        {
-          officeId,
-          checkInAt: now,
-          status: computed.status,
-          lateByMinutes: computed.lateByMinutes,
-          workedMinutes: 0,
-        },
-        {
-          officeId,
-          checkInAt: now,
-          status: computed.status,
-          lateByMinutes: computed.lateByMinutes,
-        },
-      );
+      // One set of values for both paths: the repository's ON CONFLICT keeps
+      // the existing office, check-in and notes when the new value is null,
+      // which is what the separate create/update objects used to express.
+      const saved = await attendanceRepository.upsertRecord(txScope, employee.id, dateKey, {
+        officeId,
+        checkInAt: now,
+        status: computed.status,
+        lateByMinutes: computed.lateByMinutes,
+        workedMinutes: 0,
+      });
 
       await attendanceRepository.createEvent(txScope, {
         employeeId: employee.id,
@@ -347,7 +340,7 @@ export const attendanceService = {
     const now = new Date();
     const dateKey = zonedDateKey(now, timezone);
 
-    const record = await attendanceRepository.findRecordWithBreaks(scope, employee.id, dateKey);
+    const record = await attendanceRepository.findRecordWithDetail(scope, employee.id, dateKey);
     if (!record?.checkInAt) throw errors.precondition("You haven't checked in today.");
     if (record.checkOutAt) throw errors.conflict("You've already checked out today.");
 
@@ -405,34 +398,22 @@ export const attendanceService = {
       isOnApprovedLeave: Boolean(leave),
     });
 
-    const saved = await prisma.$transaction(async (tx) => {
-      const txScope: TenantScope = { organizationId: scope.organizationId, db: tx };
+    const saved = await transaction(async (tx) => {
+      const txScope: TenantScope = { organizationId: scope.organizationId, tx };
 
-      const updated = await attendanceRepository.upsertRecord(
-        txScope,
-        employee.id,
-        dateKey,
-        {
-          checkInAt: record.checkInAt,
-          checkOutAt: now,
-          status: computed.status,
-          workedMinutes: computed.workedMinutes,
-          breakMinutes,
-          overtimeMinutes: computed.overtimeMinutes,
-          lateByMinutes: computed.lateByMinutes,
-          earlyByMinutes: computed.earlyByMinutes,
-          notes: notes ?? null,
-        },
-        {
-          checkOutAt: now,
-          status: computed.status,
-          workedMinutes: computed.workedMinutes,
-          breakMinutes,
-          overtimeMinutes: computed.overtimeMinutes,
-          earlyByMinutes: computed.earlyByMinutes,
-          ...(notes ? { notes } : {}),
-        },
-      );
+      const updated = await attendanceRepository.upsertRecord(txScope, employee.id, dateKey, {
+        checkInAt: record.checkInAt,
+        checkOutAt: now,
+        status: computed.status,
+        workedMinutes: computed.workedMinutes,
+        breakMinutes,
+        overtimeMinutes: computed.overtimeMinutes,
+        lateByMinutes: computed.lateByMinutes,
+        earlyByMinutes: computed.earlyByMinutes,
+        // Null leaves the stored note alone, rather than blanking it on a
+        // check-out that did not supply one.
+        notes: notes ?? null,
+      });
 
       await attendanceRepository.createEvent(txScope, {
         employeeId: employee.id,
@@ -512,9 +493,9 @@ export const attendanceService = {
     await attendanceRepository.endBreak(scope, openBreak.id, now, minutes);
     const totalBreakMinutes = await attendanceRepository.totalBreakMinutes(scope, record.id);
 
-    await prisma.attendanceRecord.updateMany({
-      where: { id: record.id, organizationId: scope.organizationId },
-      data: { breakMinutes: totalBreakMinutes },
+    await attendanceRepository.upsertRecord(scope, employee.id, record.date, {
+      status: record.status,
+      breakMinutes: totalBreakMinutes,
     });
     await attendanceRepository.createEvent(scope, {
       employeeId: employee.id,
@@ -558,37 +539,20 @@ export const attendanceService = {
           })
         : null;
 
-    const saved = await attendanceRepository.upsertRecord(
-      scope,
-      input.employeeId,
-      dateKey,
-      {
-        officeId: input.officeId ?? null,
-        checkInAt: input.checkInAt ?? null,
-        checkOutAt: input.checkOutAt ?? null,
-        status: input.status,
-        workedMinutes: computed?.workedMinutes ?? 0,
-        lateByMinutes: computed?.lateByMinutes ?? 0,
-        overtimeMinutes: computed?.overtimeMinutes ?? 0,
-        isManualEntry: true,
-        overrideReason: input.reason,
-      },
-      {
-        officeId: input.officeId ?? null,
-        checkInAt: input.checkInAt ?? null,
-        checkOutAt: input.checkOutAt ?? null,
-        status: input.status,
-        ...(computed
-          ? {
-              workedMinutes: computed.workedMinutes,
-              lateByMinutes: computed.lateByMinutes,
-              overtimeMinutes: computed.overtimeMinutes,
-            }
-          : {}),
-        isManualEntry: true,
-        overrideReason: input.reason,
-      },
-    );
+    const saved = await attendanceRepository.upsertRecord(scope, input.employeeId, dateKey, {
+      officeId: input.officeId ?? null,
+      checkInAt: input.checkInAt ?? null,
+      checkOutAt: input.checkOutAt ?? null,
+      status: input.status,
+      // Zero rather than "leave alone" when there is nothing to compute: an
+      // override that clears the check-out has no worked time by definition,
+      // and carrying the old figure forward would misreport the day.
+      workedMinutes: computed?.workedMinutes ?? 0,
+      lateByMinutes: computed?.lateByMinutes ?? 0,
+      overtimeMinutes: computed?.overtimeMinutes ?? 0,
+      isManualEntry: true,
+      overrideReason: input.reason,
+    });
 
     await auditService.record(scope, session, {
       action: "ATTENDANCE_OVERRIDE",
