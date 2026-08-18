@@ -793,3 +793,11 @@ export const taskRepository = {
     return affected > 0;
   },
 };
+
+/**
+ * A task with its subtasks, comments, attachments and activity timeline.
+ *
+ * Derived from `findById` rather than declared separately, so the two cannot
+ * drift: adding a field to the query adds it here.
+ */
+export type TaskDetail = NonNullable<Awaited<ReturnType<typeof taskRepository.findById>>>;

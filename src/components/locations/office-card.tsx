@@ -140,7 +140,7 @@ export function OfficeCard({
             {minutesToClock12(office.workdayStartMinutes)} – {minutesToClock12(office.workdayEndMinutes)}
           </Detail>
           <Detail icon={Users} label="Assigned staff">
-            {office._count.primaryEmployees}
+            {office.assignedEmployeeCount}
           </Detail>
         </dl>
 

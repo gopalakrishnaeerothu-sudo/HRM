@@ -79,23 +79,23 @@ export function TaskListItem({ task, compact = false }: { task: TaskSummary; com
             </div>
 
             <div className="flex shrink-0 items-center gap-3 text-[0.6875rem] text-ink-muted">
-              {task._count.comments > 0 ? (
+              {task.counts.comments > 0 ? (
                 <span className="flex items-center gap-1">
                   <MessageSquare className="size-3.5" aria-hidden />
-                  {task._count.comments}
+                  {task.counts.comments}
                   <span className="sr-only">comments</span>
                 </span>
               ) : null}
-              {task._count.attachments > 0 ? (
+              {task.counts.attachments > 0 ? (
                 <span className="flex items-center gap-1">
                   <Paperclip className="size-3.5" aria-hidden />
-                  {task._count.attachments}
+                  {task.counts.attachments}
                   <span className="sr-only">attachments</span>
                 </span>
               ) : null}
-              {task._count.subtasks > 0 ? (
+              {task.counts.subtasks > 0 ? (
                 <span>
-                  {task._count.subtasks} subtask{task._count.subtasks === 1 ? "" : "s"}
+                  {task.counts.subtasks} subtask{task.counts.subtasks === 1 ? "" : "s"}
                 </span>
               ) : null}
             </div>

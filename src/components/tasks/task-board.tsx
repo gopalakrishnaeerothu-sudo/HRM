@@ -204,16 +204,16 @@ export function TaskBoard({ tasks: initialTasks }: { tasks: TaskSummary[] }) {
                       />
 
                       <div className="flex shrink-0 items-center gap-2.5 text-[0.6875rem] text-ink-muted">
-                        {task._count.comments > 0 ? (
+                        {task.counts.comments > 0 ? (
                           <span className="flex items-center gap-1">
                             <MessageSquare className="size-3" aria-hidden />
-                            {task._count.comments}
+                            {task.counts.comments}
                           </span>
                         ) : null}
-                        {task._count.attachments > 0 ? (
+                        {task.counts.attachments > 0 ? (
                           <span className="flex items-center gap-1">
                             <Paperclip className="size-3" aria-hidden />
-                            {task._count.attachments}
+                            {task.counts.attachments}
                           </span>
                         ) : null}
                       </div>

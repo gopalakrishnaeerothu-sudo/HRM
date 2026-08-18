@@ -56,7 +56,7 @@ export default async function TeamsPage() {
     new Set(teams.flatMap((team) => team.members.map((member) => member.employee.id))),
   );
   const workload = await taskRepository.workloadByEmployee(scope, allMemberIds);
-  const loadById = new Map(workload.map((row) => [row.employeeId, row.openTasks]));
+  const loadById = new Map(workload.map((row) => [row.employeeId, row.open]));
 
   const teamLoads = teams.map((team) => ({
     team,
@@ -65,7 +65,7 @@ export default async function TeamsPage() {
       0,
     ),
   }));
-  const maxLoad = Math.max(1, ...teamLoads.map((entry) => entry.openTasks));
+  const maxLoad = Math.max(1, ...teamLoads.map((entry) => entry.open));
 
   const totalMembers = new Set(
     teams.flatMap((team) => team.members.map((member) => member.employee.id)),
@@ -112,7 +112,7 @@ export default async function TeamsPage() {
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     <Badge tone="outline" size="sm">
-                      {team._count.members} {team._count.members === 1 ? "member" : "members"}
+                      {team.counts.members} {team.counts.members === 1 ? "member" : "members"}
                     </Badge>
                     {canManage ? (
                       <TeamFormDialog
@@ -188,7 +188,7 @@ export default async function TeamsPage() {
                     <div className="mb-2 flex items-baseline justify-between gap-2">
                       <span className="text-xs text-ink-muted">Open task load</span>
                       <span className="text-xs font-medium tabular text-ink">
-                        {openTasks} open · {team._count.tasks} total
+                        {openTasks} open · {team.counts.tasks} total
                       </span>
                     </div>
                     <Progress

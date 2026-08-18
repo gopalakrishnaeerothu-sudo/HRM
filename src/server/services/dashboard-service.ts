@@ -285,7 +285,7 @@ export const dashboardService = {
       taskRepository.countOverdue(scope, envelope),
     ]);
 
-    const workloadById = new Map(workload.map((row) => [row.employeeId, row.openTasks]));
+    const workloadById = new Map(workload.map((row) => [row.employeeId, row.open]));
 
     const countOf = (...wanted: string[]) =>
       statuses.filter((row) => wanted.includes(row.status)).reduce((sum, row) => sum + row.count, 0);
