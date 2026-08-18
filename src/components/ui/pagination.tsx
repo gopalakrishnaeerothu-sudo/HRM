@@ -111,12 +111,14 @@ export interface PaginationProps {
   className?: string;
 }
 
+// Design tokens, not raw colours: the control has to sit correctly beside the
+// tables and cards it paginates, in both themes.
 const controlBase =
-  "inline-flex h-9 min-w-9 items-center justify-center rounded-lg border border-white/10 " +
-  "bg-white/5 px-3 text-sm font-medium transition-colors " +
-  "hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 " +
-  "focus-visible:ring-indigo-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent " +
-  "disabled:pointer-events-none disabled:opacity-40";
+  "inline-flex h-9 min-w-9 items-center justify-center rounded-lg border border-line " +
+  "bg-surface-2 px-3 text-sm font-medium text-ink transition-colors " +
+  "hover:bg-surface-3 hover:border-line-strong focus-visible:outline-none " +
+  "focus-visible:ring-2 focus-visible:ring-brand/60 focus-visible:ring-offset-2 " +
+  "focus-visible:ring-offset-canvas disabled:pointer-events-none disabled:opacity-40";
 
 export function Pagination({
   page,
@@ -135,14 +137,14 @@ export function Pagination({
     <nav
       aria-label={label}
       className={cn(
-        "flex flex-col gap-3 border-t border-white/10 pt-4",
+        "flex flex-col gap-3 border-t border-line pt-4",
         // Single column on narrow screens so nothing is squeezed; the summary
         // and controls sit on one row once there is room for both.
         "sm:flex-row sm:items-center sm:justify-between",
         className,
       )}
     >
-      <div className="flex items-center gap-3 text-sm text-white/60">
+      <div className="flex items-center gap-3 text-sm text-ink-muted">
         <span aria-live="polite">{describeRange(current, pageSize, total)}</span>
 
         {onPageSizeChange ? (
@@ -154,7 +156,7 @@ export function Pagination({
               className={cn(controlBase, "cursor-pointer pr-2")}
             >
               {PAGE_SIZES.map((size) => (
-                <option key={size} value={size} className="bg-slate-900">
+                <option key={size} value={size} className="bg-surface-2">
                   {size} / page
                 </option>
               ))}
@@ -183,7 +185,7 @@ export function Pagination({
                 // Two ellipses can coexist, so the index is part of the key.
                 key={`gap-${index}`}
                 aria-hidden
-                className="inline-flex h-9 w-9 items-center justify-center text-white/40"
+                className="inline-flex h-9 w-9 items-center justify-center text-ink-muted"
               >
                 <MoreHorizontal className="h-4 w-4" />
               </li>
@@ -197,7 +199,7 @@ export function Pagination({
                   className={cn(
                     controlBase,
                     item === current &&
-                      "border-indigo-400/60 bg-indigo-500/20 text-white shadow-[0_0_18px_-6px_rgb(99_102_241)]",
+                      "border-brand/50 bg-brand-soft text-brand-ink hover:bg-brand-soft",
                   )}
                 >
                   {item}

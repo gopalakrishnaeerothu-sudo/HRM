@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Pagination } from "@/components/ui/pagination";
 import { NoResultsState } from "@/components/ui/states";
 import {
   Select,
@@ -98,7 +99,7 @@ export function EmployeeDirectory({
     return () => window.clearTimeout(timer);
   }, [search, query.search, setParam]);
 
-  const { items, total, page, pageCount } = initialResult;
+  const { items, total, page, pageSize } = initialResult;
   const hasFilters = Boolean(
     query.search || query.status || query.departmentId || query.officeId || query.teamId,
   );
@@ -343,31 +344,14 @@ export function EmployeeDirectory({
         )}
       </Card>
 
-      {pageCount > 1 ? (
-        <nav className="flex items-center justify-between gap-3" aria-label="Pagination">
-          <p className="text-sm text-ink-muted">
-            Page {page} of {pageCount} · {total} total
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={page <= 1}
-              onClick={() => setParam({ page: String(page - 1) })}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={page >= pageCount}
-              onClick={() => setParam({ page: String(page + 1) })}
-            >
-              Next
-            </Button>
-          </div>
-        </nav>
-      ) : null}
+      <Pagination
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        label="Employee directory pages"
+        onPageChange={(next) => setParam({ page: String(next) })}
+        onPageSizeChange={(size) => setParam({ pageSize: String(size), page: undefined })}
+      />
     </div>
   );
 }
