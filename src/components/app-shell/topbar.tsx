@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, Home, LogOut, Menu, Search, Settings, User as UserIcon } from "lucide-react";
+import { Bell, LogOut, Menu, Search, Settings, User as UserIcon } from "lucide-react";
 
 import { cn, initials } from "@/lib/utils";
 import { formatRelative } from "@/lib/time";
@@ -76,20 +76,6 @@ export function Topbar({
   const router = useRouter();
 
   React.useEffect(() => setDrawerOpen(false), [pathname]);
-
-  /**
-   * Ends the session server-side, then leaves. `refresh` clears the router
-   * cache, without which the signed-in shell would still be served from
-   * memory on a back navigation.
-   */
-  const handleSignOut = React.useCallback(async () => {
-    try {
-      await fetch("/api/auth/sign-out", { method: "POST" });
-    } finally {
-      router.push("/login");
-      router.refresh();
-    }
-  }, [router]);
 
   const loadNotifications = React.useCallback(async () => {
     setLoadingNotifications(true);
@@ -295,13 +281,9 @@ export function Topbar({
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
                   <Link href="/">
-                    <Home />
+                    <LogOut />
                     Back to {productName}
                   </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={handleSignOut}>
-                  <LogOut />
-                  Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

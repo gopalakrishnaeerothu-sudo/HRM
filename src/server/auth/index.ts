@@ -6,7 +6,6 @@ import { errors } from "@/lib/errors";
 import { isProduction, serverEnv } from "@/lib/env";
 import { hasPermission, type Permission } from "@/server/auth/permissions";
 import { devAuthAdapter } from "@/server/auth/dev-adapter";
-import { passwordAuthAdapter } from "@/server/auth/password-adapter";
 import type { AuthAdapter, AuthSession } from "@/server/auth/types";
 
 /**
@@ -19,19 +18,36 @@ import type { AuthAdapter, AuthSession } from "@/server/auth/types";
  */
 
 /**
- * Which adapter answers.
+ * Placeholder for the production adapter. It deliberately throws rather than
+ * falling back to something permissive: an unconfigured production deployment
+ * must fail closed.
  *
- * Email/password is the real one and is what every deployment uses. The
- * development impersonation adapter is available only outside production and
- * only when explicitly switched on, so a deployment cannot fall into it by
- * forgetting to unset a variable — the `isProduction` half of this condition
- * cannot be satisfied from configuration.
+ * To implement: verify the session cookie against the `sessions` table
+ * (`tokenHash` = SHA-256 of the cookie value, `expiresAt` in the future,
+ * `revokedAt` null), then build the same `AuthSession` shape the dev adapter
+ * returns. See src/server/auth/README.md.
  */
+const unconfiguredProductionAdapter: AuthAdapter = {
+  name: "unconfigured",
+  strategy: "session-cookie",
+  async getSession() {
+    return null;
+  },
+  async signIn() {
+    throw errors.precondition(
+      "No authentication provider is configured for this deployment. Register an AuthAdapter in src/server/auth/index.ts.",
+    );
+  },
+  async signOut() {
+    /* nothing to revoke */
+  },
+};
+
 function resolveAdapter(): AuthAdapter {
   if (!isProduction && serverEnv().DEV_AUTH_ENABLED) {
     return devAuthAdapter;
   }
-  return passwordAuthAdapter;
+  return unconfiguredProductionAdapter;
 }
 
 export const authAdapter = { get current() { return resolveAdapter(); } };
