@@ -7,6 +7,7 @@ import { requirePermission, getSession, can } from "@/server/auth";
 import { employeeService } from "@/server/services/employee-service";
 import { Button } from "@/components/ui/button";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
+import { EmployeeImportDialog } from "@/components/employees/employee-import-dialog";
 import { EmployeeDirectory } from "@/components/employees/employee-directory";
 
 export const metadata: Metadata = { title: "Employees" };
@@ -44,12 +45,15 @@ export default async function EmployeesPage({
         description={`${result.total} ${result.total === 1 ? "person" : "people"} in ${session!.organization.name}.`}
         actions={
           canCreate ? (
-            <Button size="sm" asChild>
-              <Link href="/app/employees/new">
-                <Plus aria-hidden />
-                Add employee
-              </Link>
-            </Button>
+            <div className="flex items-center gap-2">
+              <EmployeeImportDialog />
+              <Button size="sm" asChild>
+                <Link href="/app/employees/new">
+                  <Plus aria-hidden />
+                  Add employee
+                </Link>
+              </Button>
+            </div>
           ) : null
         }
       />
