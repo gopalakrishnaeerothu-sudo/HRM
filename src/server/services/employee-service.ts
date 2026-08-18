@@ -75,7 +75,6 @@ export const employeeService = {
     }
 
     const created = await employeeRepository.create(scope, {
-      organizationId: scope.organizationId,
       employeeCode: input.employeeCode,
       firstName: input.firstName,
       lastName: input.lastName,

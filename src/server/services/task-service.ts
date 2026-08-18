@@ -11,6 +11,7 @@ import { STATUS_IMPLIED_PROGRESS, TASK_PRIORITY_LABELS, TASK_STATUS_LABELS } fro
 import type { AuthSession } from "@/server/auth/types";
 import { hasPermission } from "@/server/auth/permissions";
 import { taskRepository, type TaskDetail, type TaskSummary } from "@/server/repositories/task-repository";
+import { transaction } from "@/server/db/transaction";
 import { assertBelongsToTenant, type TenantScope } from "@/server/db/tenant";
 import { resolveVisibleEmployeeIds, tenantScopeFor } from "@/server/services/access-service";
 import { notificationService } from "@/server/services/notification-service";
@@ -39,7 +40,7 @@ function activity(
   message: string,
   fromValue?: string | null,
   toValue?: string | null,
-): Omit<Prisma.TaskActivityUncheckedCreateInput, "organizationId"> {
+): { taskId: string; actorId: string | null; type: TaskActivityType; message: string; fromValue: string | null; toValue: string | null } {
   return { taskId, actorId, type, message, fromValue: fromValue ?? null, toValue: toValue ?? null };
 }
 
@@ -96,62 +97,53 @@ export const taskService = {
 
     const progress = input.progress || (STATUS_IMPLIED_PROGRESS[input.status] ?? 0);
 
-    const task = await prisma.$transaction(async (tx) => {
-      const txScope: TenantScope = { organizationId: scope.organizationId, db: tx };
-      const reference = await taskRepository.nextReference(txScope);
+    // One transaction: a task whose assignees or opening timeline entry failed
+    // to write is worse than no task at all, because it looks complete.
+    const taskId = await transaction(async (tx) => {
+      const txScope: TenantScope = { organizationId: scope.organizationId, tx };
 
-      const created = await tx.task.create({
-        data: {
-          organizationId: scope.organizationId,
-          reference,
-          title: input.title,
-          description: input.description ?? null,
-          status: input.status,
-          priority: input.priority,
-          creatorId,
-          teamId: input.teamId ?? null,
-          startDate: input.startDate ?? null,
-          dueDate: input.dueDate ?? null,
-          estimatedHours: input.estimatedHours ?? null,
-          progress,
-          tags: input.tags,
-          boardOrder: Date.now(),
-          completedAt: input.status === "COMPLETED" ? new Date() : null,
-          assignees: {
-            create: input.assigneeIds.map((employeeId) => ({
-              employeeId,
-              isOwner: employeeId === input.ownerId,
-            })),
-          },
-        },
-        select: { id: true },
+      // The repository allocates the per-tenant reference inside the INSERT
+      // itself, so there is no read-then-write window for two creations to
+      // land on the same number.
+      const createdId = await taskRepository.create(txScope, {
+        title: input.title,
+        description: input.description ?? null,
+        status: input.status,
+        priority: input.priority,
+        creatorId,
+        teamId: input.teamId ?? null,
+        startDate: input.startDate ?? null,
+        dueDate: input.dueDate ?? null,
+        estimatedHours: input.estimatedHours ?? null,
+        tags: input.tags,
+        assigneeIds: input.assigneeIds,
+        ownerId: input.ownerId ?? null,
       });
 
-      await tx.taskActivity.create({
-        data: {
-          organizationId: scope.organizationId,
-          ...activity(created.id, creatorId, "CREATED", `created this task`),
-        },
+      await taskRepository.update(txScope, createdId, {
+        progress,
+        boardOrder: Date.now(),
+      });
+
+      await taskRepository.recordActivity(txScope, {
+        ...activity(createdId, creatorId, "CREATED", `created this task`),
       });
 
       if (input.assigneeIds.length > 0) {
-        await tx.taskActivity.create({
-          data: {
-            organizationId: scope.organizationId,
-            ...activity(
-              created.id,
-              creatorId,
-              "ASSIGNED",
-              `assigned it to ${input.assigneeIds.length} ${input.assigneeIds.length === 1 ? "person" : "people"}`,
-            ),
-          },
+        await taskRepository.recordActivity(txScope, {
+          ...activity(
+            createdId,
+            creatorId,
+            "ASSIGNED",
+            `assigned it to ${input.assigneeIds.length} ${input.assigneeIds.length === 1 ? "person" : "people"}`,
+          ),
         });
       }
 
-      return created;
+      return createdId;
     });
 
-    const summary = await taskRepository.findById(scope, task.id);
+    const summary = await taskRepository.findById(scope, taskId);
     if (!summary) throw errors.internal();
 
     await notificationService.taskAssigned(scope, summary, input.assigneeIds, session);

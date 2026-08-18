@@ -110,7 +110,8 @@ Nixpacks path does not need it.
 ```
 Server Components → Services → Repositories → PostgreSQL
 
-(Repositories are migrating from Prisma to plain SQL — see docs/ARCHITECTURE.md §4.)
+Repositories issue plain SQL through `pg`. Prisma removal is in its final
+stage — see docs/ARCHITECTURE.md §4 for how to check what remains.
                         ▲            ▲
                 auth boundary   TenantScope (organizationId on every query)
 ```

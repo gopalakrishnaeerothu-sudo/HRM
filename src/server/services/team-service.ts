@@ -49,13 +49,11 @@ export const teamService = {
       color: input.color,
       departmentId: input.departmentId ?? null,
       managerId: input.managerId ?? null,
-      members: {
-        create: (input.memberIds ?? []).map((employeeId) => ({
-          employeeId,
-          roleLabel: employeeId === input.managerId ? "Lead" : null,
-        })),
-      },
     });
+
+    if (input.memberIds?.length) {
+      await teamRepository.replaceMembers(scope, team.id, input.memberIds);
+    }
 
     await auditService.record(scope, session, {
       action: "CREATE",
@@ -99,12 +97,12 @@ export const teamService = {
         {
           name: before.name,
           managerId: before.manager?.id ?? null,
-          memberCount: before._count.members,
+          memberCount: before.counts.members,
         },
         {
           name: after.name,
           managerId: after.manager?.id ?? null,
-          memberCount: after._count.members,
+          memberCount: after.counts.members,
         },
       ),
     });

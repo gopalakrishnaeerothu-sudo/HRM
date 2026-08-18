@@ -456,12 +456,26 @@ export const officeRepository = {
   async updateGeofence(
     scope: TenantScope,
     geofenceId: string,
-    data: { name: string; latitude: number; longitude: number; radiusMeters: number; isPrimary: boolean; isActive: boolean },
+    // Partial: callers legitimately change one field — resizing a perimeter is
+    // the common case — and requiring all six invites a caller to re-send
+    // stale values it read some time ago.
+    data: {
+      name?: string;
+      latitude?: number;
+      longitude?: number;
+      radiusMeters?: number;
+      isPrimary?: boolean;
+      isActive?: boolean;
+    },
   ): Promise<boolean> {
     const affected = await execute(
       `UPDATE office_geofences g
-          SET name = $3, latitude = $4, longitude = $5,
-              radius_meters = $6, is_primary = $7, is_active = $8
+          SET name          = COALESCE($3, g.name),
+              latitude      = COALESCE($4, g.latitude),
+              longitude     = COALESCE($5, g.longitude),
+              radius_meters = COALESCE($6, g.radius_meters),
+              is_primary    = COALESCE($7, g.is_primary),
+              is_active     = COALESCE($8, g.is_active)
          FROM offices o
         WHERE g.office_id = o.id
           AND g.id = $1
@@ -470,12 +484,12 @@ export const officeRepository = {
       [
         geofenceId,
         scope.organizationId,
-        data.name,
-        data.latitude,
-        data.longitude,
-        data.radiusMeters,
-        data.isPrimary,
-        data.isActive,
+        data.name ?? null,
+        data.latitude ?? null,
+        data.longitude ?? null,
+        data.radiusMeters ?? null,
+        data.isPrimary ?? null,
+        data.isActive ?? null,
       ],
       exec(scope),
     );

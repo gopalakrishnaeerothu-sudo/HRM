@@ -168,7 +168,7 @@ export const officeService = {
       return officeRepository.requireById(scope, officeId);
     }
 
-    const created = await officeRepository.createGeofence(scope, officeId, {
+    const createdGeofenceId = await officeRepository.createGeofence(scope, officeId, {
       name: input.name,
       latitude: input.latitude,
       longitude: input.longitude,
@@ -177,12 +177,12 @@ export const officeService = {
       isActive: input.isActive,
     });
 
-    if (input.isPrimary) await officeRepository.clearPrimaryFlag(scope, officeId, created.id);
+    if (input.isPrimary) await officeRepository.clearPrimaryFlag(scope, officeId, createdGeofenceId);
 
     await auditService.record(scope, session, {
       action: "GEOFENCE_CHANGE",
       entityType: "office_geofences",
-      entityId: created.id,
+      entityId: createdGeofenceId,
       summary: `Added a ${input.radiusMeters} m zone “${input.name}” to ${office.name}`,
       changes: { radiusMeters: input.radiusMeters, latitude: input.latitude, longitude: input.longitude },
     });

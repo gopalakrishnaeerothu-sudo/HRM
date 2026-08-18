@@ -65,7 +65,7 @@ export default async function TeamsPage() {
       0,
     ),
   }));
-  const maxLoad = Math.max(1, ...teamLoads.map((entry) => entry.open));
+  const maxLoad = Math.max(1, ...teamLoads.map((entry) => entry.openTasks));
 
   const totalMembers = new Set(
     teams.flatMap((team) => team.members.map((member) => member.employee.id)),

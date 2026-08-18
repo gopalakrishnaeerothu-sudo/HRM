@@ -5,7 +5,7 @@ import { addDays, eachDay, startOfUtcDay, zonedDateKey } from "@/lib/time";
 import { ratio } from "@/lib/utils";
 import type { AuthSession } from "@/server/auth/types";
  
-import { attendanceRepository, findEmployeesWithoutRecord } from "@/server/repositories/attendance-repository";
+import { attendanceRepository } from "@/server/repositories/attendance-repository";
 import { employeeRepository } from "@/server/repositories/employee-repository";
 import { taskRepository } from "@/server/repositories/task-repository";
 import { officeRepository } from "@/server/repositories/office-repository";
@@ -64,7 +64,7 @@ export const dashboardService = {
       attendanceRepository.countByStatusForDate(scope, yesterday, envelope ?? undefined),
       taskRepository.countByStatus(scope, envelope),
       taskRepository.countOverdue(scope, envelope),
-      findEmployeesWithoutRecord(scope, today, envelope ?? undefined),
+      attendanceRepository.findEmployeesWithoutRecord(scope, today, envelope ?? undefined),
       officeRepository.list(scope, false),
     ]);
 

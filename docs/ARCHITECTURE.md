@@ -133,17 +133,23 @@ filters on it:
 The target architecture has no ORM: repositories issue SQL through the `pg`
 driver, and the schema is defined by numbered migration files.
 
-**Current state, accurately.** The migration is partly done. All repositories
-have been ported and live in `src/server/repositories/sql/`, backed by 101
-integration tests against a real PostgreSQL instance. The seed is plain SQL.
-But the SERVICE layer still calls the older Prisma repositories, so Prisma is
-still installed and still executing queries at runtime. Both layers point at
-the same database, which is why the application builds and the suite passes.
+**Current state.** The repository layer is fully SQL: every repository in
+`src/server/repositories/` issues plain SQL through `pg`, backed by integration
+tests that run against a real PostgreSQL instance. Migrations and the seed are
+plain SQL.
 
-Remaining to finish the removal: move the services onto the SQL repositories
-(~64 `client(scope)` call sites, plus 13 files querying Prisma directly), then
-delete `prisma/`, `@prisma/client`, the dependency and `src/lib/db.ts`. Until
-that lands, `npm ls prisma` still resolves.
+Prisma removal is finishing. A handful of call sites outside the repository
+layer still reach for it — chiefly `src/lib/db.ts` and the routes and services
+that have not yet been moved across — so `@prisma/client` remains installed
+until those land. Check the real position rather than trusting this paragraph:
+
+```
+grep -rl "@prisma/client\|@/lib/db" src        should return nothing
+npm ls prisma                                   should not resolve
+```
+
+When both are clean, delete `prisma/`, `src/lib/db.ts` and the two
+dependencies.
 
 ### Migrations
 

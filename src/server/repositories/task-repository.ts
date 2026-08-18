@@ -567,6 +567,43 @@ export const taskRepository = {
     return inserted.id;
   },
 
+  /**
+   * Append to a task's timeline.
+   *
+   * Insert-only by design, like the other evidence tables: an activity entry
+   * records that something happened at a point in time, and editing one turns
+   * the timeline into a record of the last person to touch it.
+   */
+  async recordActivity(
+    scope: TenantScope,
+    entry: {
+      taskId: string;
+      actorId: string | null;
+      type: TaskActivityType;
+      message: string;
+      fromValue?: string | null;
+      toValue?: string | null;
+    },
+  ): Promise<void> {
+    await execute(
+      `INSERT INTO task_activity (organization_id, task_id, actor_id, type, message, from_value, to_value)
+       SELECT $1, $2, $3, $4::task_activity_type, $5, $6, $7
+        WHERE EXISTS (
+          SELECT 1 FROM tasks WHERE id = $2 AND organization_id = $1 AND deleted_at IS NULL
+        )`,
+      [
+        scope.organizationId,
+        entry.taskId,
+        entry.actorId,
+        entry.type,
+        entry.message,
+        entry.fromValue ?? null,
+        entry.toValue ?? null,
+      ],
+      exec(scope),
+    );
+  },
+
   async update(
     scope: TenantScope,
     id: string,

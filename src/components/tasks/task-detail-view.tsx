@@ -432,7 +432,7 @@ export function TaskDetailView({ task, canEdit }: { task: TaskDetail; canEdit: b
               <Meta icon={Timer} label="Estimate">
                 <span className="text-sm text-ink">
                   {task.estimatedHours ? `${task.estimatedHours} h` : "—"}
-                  {task.actualHours > 0 ? (
+                  {(task.actualHours ?? 0) > 0 ? (
                     <span className="text-ink-muted"> · {task.actualHours} h logged</span>
                   ) : null}
                 </span>
