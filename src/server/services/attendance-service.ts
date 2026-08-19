@@ -3,7 +3,6 @@ import "server-only";
 import type { AttendanceSource } from "@/server/db/types";
 import { z } from "zod";
 
-import { prisma } from "@/lib/db";
 import { errors } from "@/lib/errors";
 import { zonedDateKey, zonedMinutesOfDay, zonedParts } from "@/lib/time";
 import type { LocationClaim } from "@/lib/validation/common";

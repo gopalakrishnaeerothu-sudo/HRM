@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, LogOut, Menu, Search, Settings, User as UserIcon } from "lucide-react";
+import { Bell, Home, Loader2, LogOut, Menu, Search, Settings, User as UserIcon } from "lucide-react";
 
 import { cn, initials } from "@/lib/utils";
 import { formatRelative } from "@/lib/time";
@@ -72,10 +72,28 @@ export function Topbar({
   const [notifications, setNotifications] = React.useState<NotificationItem[]>([]);
   const [unread, setUnread] = React.useState(unreadCount);
   const [loadingNotifications, setLoadingNotifications] = React.useState(false);
+  const [signingOut, setSigningOut] = React.useState(false);
   const pathname = usePathname();
   const router = useRouter();
 
   React.useEffect(() => setDrawerOpen(false), [pathname]);
+
+  /**
+   * Ends the session server-side, then leaves.
+   *
+   * `refresh` matters as much as the navigation: the app shell is a server
+   * component that rendered while signed in, and without it a back navigation
+   * would serve that shell from the client router cache.
+   */
+  const handleSignOut = React.useCallback(async () => {
+    setSigningOut(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      router.push("/login");
+      router.refresh();
+    }
+  }, [router]);
 
   const loadNotifications = React.useCallback(async () => {
     setLoadingNotifications(true);
@@ -281,9 +299,13 @@ export function Topbar({
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
                   <Link href="/">
-                    <LogOut />
+                    <Home />
                     Back to {productName}
                   </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={handleSignOut} disabled={signingOut}>
+                  {signingOut ? <Loader2 className="animate-spin" /> : <LogOut />}
+                  {signingOut ? "Signing out…" : "Sign out"}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

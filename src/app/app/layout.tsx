@@ -1,14 +1,12 @@
+import { redirect } from "next/navigation";
 
 import { branding } from "@/lib/branding";
 import { isProduction, serverEnv } from "@/lib/env";
-import { getSession } from "@/server/auth";
-import { PERMISSIONS, type Permission } from "@/server/auth/permissions";
-import { hasPermission } from "@/server/auth/permissions";
+import { getCurrentUser } from "@/server/auth";
 import { notificationService } from "@/server/services/notification-service";
 import { Sidebar } from "@/components/app-shell/sidebar";
 import { Topbar } from "@/components/app-shell/topbar";
 import { MobileBottomBar } from "@/components/app-shell/mobile-nav";
-import { NoSessionScreen } from "@/components/app-shell/no-session-screen";
 
 /**
  * Authenticated application shell.
@@ -23,18 +21,16 @@ import { NoSessionScreen } from "@/components/app-shell/no-session-screen";
  * security boundary.
  */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const session = await getSession();
+  const context = await getCurrentUser();
 
-  if (!session) {
-    // No authentication provider is configured (or the dev adapter is off).
-    // Rather than redirect into a sign-in page that does not exist yet, explain
-    // the state — this is the seam a real adapter fills.
-    return <NoSessionScreen devAuthAvailable={!isProduction} />;
-  }
+  // The authorisation boundary. Middleware already turned away requests with
+  // no session cookie, but a cookie that is expired, revoked, or belongs to a
+  // now-disabled account only fails here, where the session is checked against
+  // the database.
+  if (!context) redirect("/login");
 
-  const grantedPermissions: Permission[] = PERMISSIONS.filter((permission) =>
-    hasPermission(session.user.role, permission, session.permissionOverrides),
-  );
+  const session = context;
+  const grantedPermissions = context.permissions;
 
   const { unread } = await notificationService.listForSession(session, 1);
 

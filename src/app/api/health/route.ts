@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { prisma } from "@/lib/db";
+import { query } from "@/server/db/query";
 
 /**
  * Health check for Railway.
@@ -21,7 +21,7 @@ export async function GET() {
   const startedAt = Date.now();
 
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await query("SELECT 1");
 
     return NextResponse.json(
       {

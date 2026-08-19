@@ -4,8 +4,9 @@ import { cache } from "react";
 
 import { errors } from "@/lib/errors";
 import { isProduction, serverEnv } from "@/lib/env";
-import { hasPermission, type Permission } from "@/server/auth/permissions";
+import { hasPermission, PERMISSIONS, type Permission } from "@/server/auth/permissions";
 import { devAuthAdapter } from "@/server/auth/dev-adapter";
+import { productionAuthAdapter } from "@/server/auth/production-adapter";
 import type { AuthAdapter, AuthSession } from "@/server/auth/types";
 
 /**
@@ -18,36 +19,24 @@ import type { AuthAdapter, AuthSession } from "@/server/auth/types";
  */
 
 /**
- * Placeholder for the production adapter. It deliberately throws rather than
- * falling back to something permissive: an unconfigured production deployment
- * must fail closed.
+ * Which adapter answers this request.
  *
- * To implement: verify the session cookie against the `sessions` table
- * (`tokenHash` = SHA-256 of the cookie value, `expiresAt` in the future,
- * `revokedAt` null), then build the same `AuthSession` shape the dev adapter
- * returns. See src/server/auth/README.md.
+ * Email and password is the real implementation and is what every deployment
+ * uses, including local development. The impersonation adapter is an extra
+ * that development may switch on; it is not a fallback, and production cannot
+ * reach it — the `isProduction` half of that condition is not settable from
+ * configuration, so leaving DEV_AUTH_ENABLED=true in a production environment
+ * changes nothing.
+ *
+ * There is deliberately no "unconfigured" branch any more. It existed to fail
+ * closed while no real provider was written; now that one is, a deployment
+ * that cannot authenticate is a bug to surface, not a state to model.
  */
-const unconfiguredProductionAdapter: AuthAdapter = {
-  name: "unconfigured",
-  strategy: "session-cookie",
-  async getSession() {
-    return null;
-  },
-  async signIn() {
-    throw errors.precondition(
-      "No authentication provider is configured for this deployment. Register an AuthAdapter in src/server/auth/index.ts.",
-    );
-  },
-  async signOut() {
-    /* nothing to revoke */
-  },
-};
-
 function resolveAdapter(): AuthAdapter {
   if (!isProduction && serverEnv().DEV_AUTH_ENABLED) {
     return devAuthAdapter;
   }
-  return unconfiguredProductionAdapter;
+  return productionAuthAdapter;
 }
 
 export const authAdapter = { get current() { return resolveAdapter(); } };
@@ -73,6 +62,41 @@ export async function requireSession(): Promise<AuthSession> {
   const session = await getSession();
   if (!session) throw errors.unauthenticated();
   return session;
+}
+
+/**
+ * The authenticated context, with permissions already resolved.
+ *
+ * `getSession` returns the principal and the tenant's permission *overrides*;
+ * turning those into the actual granted set means folding in the role
+ * defaults, which several call sites were each doing for themselves. Doing it
+ * once here means a page and its navigation cannot disagree about what the
+ * user may do.
+ *
+ * Cached alongside `getSession`, so this costs no extra round-trip.
+ */
+export const getCurrentUser = cache(async (): Promise<AuthContext | null> => {
+  const session = await getSession();
+  if (!session) return null;
+
+  return {
+    ...session,
+    permissions: PERMISSIONS.filter((permission) =>
+      hasPermission(session.user.role, permission, session.permissionOverrides),
+    ),
+  };
+});
+
+/** The authenticated context or 401. */
+export async function requireCurrentUser(): Promise<AuthContext> {
+  const context = await getCurrentUser();
+  if (!context) throw errors.unauthenticated();
+  return context;
+}
+
+export interface AuthContext extends AuthSession {
+  /** Every permission this user actually holds, role defaults plus overrides. */
+  permissions: Permission[];
 }
 
 /** Session whose user has an employee profile, or 403. */

@@ -29,7 +29,8 @@
     "test:db:create": "node scripts/create-test-db.mjs",
     "test:integration": "node scripts/create-test-db.mjs && vitest run",
     "db:migrate:status": "node scripts/migrate.mjs status",
-    "test:sql": "node scripts/create-test-db.mjs && vitest run"
+    "test:sql": "node scripts/create-test-db.mjs && vitest run",
+    "auth:bootstrap": "tsx scripts/auth-bootstrap.ts"
   },
   "dependencies": {
     "@node-rs/argon2": "^2.1.0",
