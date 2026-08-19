@@ -3,6 +3,7 @@ import "server-only";
 import { cookies } from "next/headers";
 
 import { query, queryOne } from "@/server/db/query";
+import type { UserRole } from "@/server/db/types";
 import { serverEnv, isProduction } from "@/lib/env";
 import { errors } from "@/lib/errors";
 import type { Permission } from "@/server/auth/permissions";
