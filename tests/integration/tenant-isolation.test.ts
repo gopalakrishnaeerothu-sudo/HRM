@@ -77,22 +77,22 @@ describe.skipIf(!hasTestDatabase)("tenant isolation", () => {
       ).rejects.toThrow();
 
       // Confirm nothing changed.
-      const unchanged = await testDb().employee.findUnique({
-        where: { id: globex.employee.id },
-        select: { designation: true },
-      });
-      expect(unchanged?.designation).toBe("Founder");
+      const { rows: unchanged } = await sqlTestPool().query<{ designation: string }>(
+        `SELECT designation FROM employees WHERE id = $1`,
+        [globex.employee.id],
+      );
+      expect(unchanged[0]?.designation).toBe("Founder");
     });
 
     it("cannot soft-delete another tenant's employee", async () => {
       const removed = await employeeRepository.softDelete(acmeScope, globex.employee.id);
       expect(removed).toBe(false);
 
-      const alive = await testDb().employee.findUnique({
-        where: { id: globex.employee.id },
-        select: { deletedAt: true },
-      });
-      expect(alive?.deletedAt).toBeNull();
+      const { rows: alive } = await sqlTestPool().query<{ deleted_at: Date | null }>(
+        `SELECT deleted_at FROM employees WHERE id = $1`,
+        [globex.employee.id],
+      );
+      expect(alive[0]?.deleted_at).toBeNull();
     });
   });
 
@@ -116,11 +116,11 @@ describe.skipIf(!hasTestDatabase)("tenant isolation", () => {
 
       expect(updated).toBe(false);
 
-      const unchanged = await testDb().officeGeofence.findUnique({
-        where: { id: globexZone.id },
-        select: { radiusMeters: true },
-      });
-      expect(unchanged?.radiusMeters).toBe(100);
+      const { rows: unchanged } = await sqlTestPool().query<{ radius_meters: number }>(
+        `SELECT radius_meters FROM office_geofences WHERE id = $1`,
+        [globexZone.id],
+      );
+      expect(unchanged[0]?.radius_meters).toBe(100);
     });
 
     it("returns no check-in zones for a foreign employee", async () => {
@@ -169,27 +169,17 @@ describe.skipIf(!hasTestDatabase)("tenant isolation", () => {
 
   describe("tasks", () => {
     it("keeps task references independent per tenant", async () => {
-      const db = testDb();
-
-      await db.task.create({
-        data: {
-          organizationId: acme.organization.id,
-          reference: 1,
-          title: "Acme task",
-          creatorId: acme.employee.id,
-        },
+      await taskRepository.create(acmeScope, {
+        title: "Acme task",
+        creatorId: acme.employee.id,
       });
 
       // The same reference number in another tenant must be allowed, because
       // the unique constraint is (organizationId, reference), not reference.
       await expect(
-        db.task.create({
-          data: {
-            organizationId: globex.organization.id,
-            reference: 1,
-            title: "Globex task",
-            creatorId: globex.employee.id,
-          },
+        taskRepository.create(globexScope, {
+          title: "Globex task",
+          creatorId: globex.employee.id,
         }),
       ).resolves.toBeDefined();
 
@@ -214,12 +204,12 @@ describe.skipIf(!hasTestDatabase)("tenant isolation", () => {
     });
 
     it("cannot read another tenant's task", async () => {
-      const globexTask = await testDb().task.findFirst({
-        where: { organizationId: globex.organization.id },
-        select: { id: true },
-      });
+      const { rows: globexTasks } = await sqlTestPool().query<{ id: string }>(
+        `SELECT id FROM tasks WHERE organization_id = $1 LIMIT 1`,
+        [globex.organization.id],
+      );
 
-      const found = await taskRepository.findById(acmeScope, globexTask!.id);
+      const found = await taskRepository.findById(acmeScope, globexTasks[0]!.id);
       expect(found).toBeNull();
     });
 
@@ -230,59 +220,42 @@ describe.skipIf(!hasTestDatabase)("tenant isolation", () => {
         null,
       );
 
-      expect(result.total).toBe(1);
-      expect(result.items[0]?.title).toBe("Acme task");
+      // Assert the property, not a count. A count couples this test to how
+      // many tasks every other test in the file happens to create, which is
+      // how a tenant-isolation test ends up failing for a reason that has
+      // nothing to do with tenant isolation.
+      expect(result.total).toBeGreaterThan(0);
+      expect(result.items.every((task) => task.title.startsWith("Acme"))).toBe(true);
+      expect(result.items.some((task) => task.title.includes("Globex"))).toBe(false);
     });
   });
 
   describe("per-tenant uniqueness", () => {
-    it("allows the same employee code in two organisations", async () => {
-      const db = testDb();
+    const insertEmployee = (organizationId: string, code: string, email: string) =>
+      sqlTestPool().query(
+        `INSERT INTO employees (organization_id, employee_code, first_name,
+                                last_name, email, designation, joined_at)
+         VALUES ($1, $2, 'Test', 'Person', $3, 'Engineer', '2024-01-01')`,
+        [organizationId, code, email],
+      );
 
+    it("allows the same employee code in two organisations", async () => {
+      // Legal, because the constraint is (organization_id, employee_code) —
+      // a global unique code would leak the fact that another tenant used it.
       await expect(
-        db.employee.create({
-          data: {
-            organizationId: globex.organization.id,
-            // Same code as Acme's employee — legal, because the constraint is
-            // (organizationId, employeeCode).
-            employeeCode: "EMP-0001-SHARED",
-            firstName: "Globex",
-            lastName: "Person",
-            email: "shared@globex.example",
-            designation: "Engineer",
-            joinedAt: new Date("2024-01-01"),
-          },
-        }),
+        insertEmployee(globex.organization.id, "EMP-0001-SHARED", "shared@globex.example"),
       ).resolves.toBeDefined();
 
       await expect(
-        db.employee.create({
-          data: {
-            organizationId: acme.organization.id,
-            employeeCode: "EMP-0001-SHARED",
-            firstName: "Acme",
-            lastName: "Person",
-            email: "shared@acme.example",
-            designation: "Engineer",
-            joinedAt: new Date("2024-01-01"),
-          },
-        }),
+        insertEmployee(acme.organization.id, "EMP-0001-SHARED", "shared@acme.example"),
       ).resolves.toBeDefined();
     });
 
     it("still rejects a duplicate code within one organisation", async () => {
+      await insertEmployee(acme.organization.id, "EMP-0002-SHARED", "one@acme.example");
+
       await expect(
-        testDb().employee.create({
-          data: {
-            organizationId: acme.organization.id,
-            employeeCode: "EMP-0001-SHARED",
-            firstName: "Duplicate",
-            lastName: "Person",
-            email: "duplicate@acme.example",
-            designation: "Engineer",
-            joinedAt: new Date("2024-01-01"),
-          },
-        }),
+        insertEmployee(acme.organization.id, "EMP-0002-SHARED", "two@acme.example"),
       ).rejects.toThrow();
     });
   });
