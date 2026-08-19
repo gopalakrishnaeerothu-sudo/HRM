@@ -1,6 +1,7 @@
 import "server-only";
 
-import { prisma } from "@/lib/db";
+import { count, query, queryOne } from "@/server/db/query";
+import { exec } from "@/server/db/tenant";
 import { errors } from "@/lib/errors";
 import type { CreateEmployeeInput, EmployeeQuery, UpdateEmployeeInput } from "@/lib/validation/employee";
 import type { AuthSession } from "@/server/auth/types";
@@ -124,11 +125,12 @@ export const employeeService = {
       });
     }
     if (input.managerId) {
-      const proposedManager = await prisma.employee.findFirst({
-        where: { id: input.managerId, organizationId: scope.organizationId },
-        select: { managerId: true },
-      });
-      if (proposedManager?.managerId === employeeId) {
+      const proposedManager = await queryOne<{ manager_id: string | null }>(
+        `SELECT manager_id FROM employees WHERE id = $1 AND organization_id = $2`,
+        [input.managerId, scope.organizationId],
+        exec(scope),
+      );
+      if (proposedManager?.manager_id === employeeId) {
         throw errors.validation("That would create a reporting loop.", {
           managerId: ["This person already reports to the employee you're editing"],
         });
@@ -185,9 +187,12 @@ export const employeeService = {
       throw errors.precondition("You can't deactivate your own employee record.");
     }
 
-    const reportCount = await prisma.employee.count({
-      where: { organizationId: scope.organizationId, managerId: employeeId, deletedAt: null },
-    });
+    const reportCount = await count(
+      `SELECT count(*) FROM employees
+        WHERE organization_id = $1 AND manager_id = $2 AND deleted_at IS NULL`,
+      [scope.organizationId, employeeId],
+      exec(scope),
+    );
     if (reportCount > 0) {
       throw errors.precondition(
         `${before.firstName} still manages ${reportCount} ${reportCount === 1 ? "person" : "people"}. Reassign them first.`,
@@ -210,21 +215,24 @@ export const employeeService = {
   async filterOptions(session: AuthSession) {
     const scope = tenantScopeFor(session);
     const [departments, offices, teams] = await Promise.all([
-      prisma.department.findMany({
-        where: { organizationId: scope.organizationId, deletedAt: null },
-        select: { id: true, name: true, color: true },
-        orderBy: { name: "asc" },
-      }),
-      prisma.office.findMany({
-        where: { organizationId: scope.organizationId, deletedAt: null },
-        select: { id: true, name: true, city: true },
-        orderBy: { name: "asc" },
-      }),
-      prisma.team.findMany({
-        where: { organizationId: scope.organizationId, deletedAt: null },
-        select: { id: true, name: true, color: true },
-        orderBy: { name: "asc" },
-      }),
+      query<{ id: string; name: string; color: string }>(
+        `SELECT id, name, color FROM departments
+          WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY name ASC`,
+        [scope.organizationId],
+        exec(scope),
+      ),
+      query<{ id: string; name: string; city: string }>(
+        `SELECT id, name, city FROM offices
+          WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY name ASC`,
+        [scope.organizationId],
+        exec(scope),
+      ),
+      query<{ id: string; name: string; color: string }>(
+        `SELECT id, name, color FROM teams
+          WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY name ASC`,
+        [scope.organizationId],
+        exec(scope),
+      ),
     ]);
     return { departments, offices, teams };
   },
