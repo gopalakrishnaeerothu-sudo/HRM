@@ -1,6 +1,5 @@
 import "server-only";
 
-import { prisma } from "@/lib/db";
 import { errors } from "@/lib/errors";
 import type { CreateOfficeInput, UpdateOfficeInput, UpsertGeofenceInput } from "@/lib/validation/office";
 import type { AuthSession } from "@/server/auth/types";
@@ -32,43 +31,25 @@ export const officeService = {
       throw errors.validation("That office code is already in use.", { code: ["Already used"] });
     }
 
-    const office = await prisma.$transaction(async (tx) => {
-      const created = await tx.office.create({
-        data: {
-          organizationId: scope.organizationId,
-          name: input.name,
-          code: input.code,
-          addressLine: input.addressLine,
-          city: input.city,
-          state: input.state ?? null,
-          country: input.country,
-          postalCode: input.postalCode ?? null,
-          timezone: input.timezone,
-          latitude: input.latitude,
-          longitude: input.longitude,
-          workdayStartMinutes: input.workdayStartMinutes,
-          workdayEndMinutes: input.workdayEndMinutes,
-          gracePeriodMinutes: input.gracePeriodMinutes,
-          status: input.status,
-        },
-        select: { id: true, name: true },
-      });
-
-      // Every office gets a primary perimeter at creation, so an employee can
-      // never be assigned to an office with no geofence to check into.
-      await tx.officeGeofence.create({
-        data: {
-          officeId: created.id,
-          name: "Main perimeter",
-          latitude: input.latitude,
-          longitude: input.longitude,
-          radiusMeters: input.radiusMeters,
-          isPrimary: true,
-          isActive: true,
-        },
-      });
-
-      return created;
+    // The repository creates the office and its primary perimeter in one
+    // statement, so the two cannot become separated — an office with no
+    // geofence is a site nobody can check in to.
+    const office = await officeRepository.create(scope, {
+      name: input.name,
+      code: input.code,
+      addressLine: input.addressLine,
+      city: input.city,
+      state: input.state ?? null,
+      country: input.country,
+      postalCode: input.postalCode ?? null,
+      timezone: input.timezone,
+      latitude: input.latitude,
+      longitude: input.longitude,
+      radiusMeters: input.radiusMeters,
+      workdayStartMinutes: input.workdayStartMinutes,
+      workdayEndMinutes: input.workdayEndMinutes,
+      gracePeriodMinutes: input.gracePeriodMinutes,
+      status: input.status,
     });
 
     await auditService.record(scope, session, {

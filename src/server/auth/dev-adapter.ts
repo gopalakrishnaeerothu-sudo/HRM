@@ -2,7 +2,7 @@ import "server-only";
 
 import { cookies } from "next/headers";
 
-import { prisma } from "@/lib/db";
+import { query, queryOne } from "@/server/db/query";
 import { serverEnv, isProduction } from "@/lib/env";
 import { errors } from "@/lib/errors";
 import type { Permission } from "@/server/auth/permissions";
@@ -43,41 +43,56 @@ function assertDevAuthAllowed(): void {
 
 /** Shape shared by `getSession` and `signIn`. */
 async function loadSession(userId: string): Promise<AuthSession | null> {
-  const user = await prisma.user.findFirst({
-    where: { id: userId, deletedAt: null, status: "ACTIVE" },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      avatarUrl: true,
-      role: true,
-      organization: { select: { id: true, slug: true, name: true, timezone: true, deletedAt: true } },
-      employee: {
-        select: {
-          id: true,
-          employeeCode: true,
-          firstName: true,
-          lastName: true,
-          designation: true,
-          avatarUrl: true,
-          departmentId: true,
-          managerId: true,
-          primaryOfficeId: true,
-          deletedAt: true,
-        },
-      },
-    },
-  });
+  // The employee join excludes soft-deleted rows here rather than filtering
+  // afterwards, so a departed employee yields a session with no employee
+  // profile instead of one carrying a dead id.
+  const user = await queryOne<{
+    id: string;
+    email: string;
+    name: string;
+    avatar_url: string | null;
+    role: UserRole;
+    org_id: string;
+    org_slug: string;
+    org_name: string;
+    org_timezone: string;
+    emp_id: string | null;
+    emp_code: string | null;
+    emp_first_name: string | null;
+    emp_last_name: string | null;
+    emp_designation: string | null;
+    emp_avatar_url: string | null;
+    emp_department_id: string | null;
+    emp_manager_id: string | null;
+    emp_primary_office_id: string | null;
+  }>(
+    `SELECT u.id, u.email, u.name, u.avatar_url, u.role,
+            o.id AS org_id, o.slug AS org_slug, o.name AS org_name,
+            o.timezone AS org_timezone,
+            e.id AS emp_id, e.employee_code AS emp_code,
+            e.first_name AS emp_first_name, e.last_name AS emp_last_name,
+            e.designation AS emp_designation, e.avatar_url AS emp_avatar_url,
+            e.department_id AS emp_department_id, e.manager_id AS emp_manager_id,
+            e.primary_office_id AS emp_primary_office_id
+       FROM users u
+       JOIN organizations o ON o.id = u.organization_id AND o.deleted_at IS NULL
+       LEFT JOIN employees e ON e.user_id = u.id AND e.deleted_at IS NULL
+      WHERE u.id = $1 AND u.deleted_at IS NULL AND u.status = 'ACTIVE'`,
+    [userId],
+  );
 
-  if (!user || user.organization.deletedAt) return null;
+  if (!user) return null;
 
-  const overrideRows = await prisma.rolePermission.findMany({
-    where: { organizationId: user.organization.id, role: user.role },
-    select: { granted: true, permission: { select: { key: true } } },
-  });
+  const overrideRows = await query<{ key: string; granted: boolean }>(
+    `SELECT p.key, rp.granted
+       FROM role_permissions rp
+       JOIN permissions p ON p.id = rp.permission_id
+      WHERE rp.organization_id = $1 AND rp.role = $2::user_role`,
+    [user.org_id, user.role],
+  );
 
   const permissionOverrides = new Map<Permission, boolean>(
-    overrideRows.map((row) => [row.permission.key as Permission, row.granted]),
+    overrideRows.map((row) => [row.key as Permission, row.granted]),
   );
 
   return {
@@ -85,29 +100,28 @@ async function loadSession(userId: string): Promise<AuthSession | null> {
       id: user.id,
       email: user.email,
       name: user.name,
-      avatarUrl: user.avatarUrl,
+      avatarUrl: user.avatar_url,
       role: user.role,
     },
     organization: {
-      id: user.organization.id,
-      slug: user.organization.slug,
-      name: user.organization.name,
-      timezone: user.organization.timezone,
+      id: user.org_id,
+      slug: user.org_slug,
+      name: user.org_name,
+      timezone: user.org_timezone,
     },
-    employee:
-      user.employee && !user.employee.deletedAt
-        ? {
-            id: user.employee.id,
-            employeeCode: user.employee.employeeCode,
-            firstName: user.employee.firstName,
-            lastName: user.employee.lastName,
-            designation: user.employee.designation,
-            avatarUrl: user.employee.avatarUrl,
-            departmentId: user.employee.departmentId,
-            managerId: user.employee.managerId,
-            primaryOfficeId: user.employee.primaryOfficeId,
-          }
-        : null,
+    employee: user.emp_id
+      ? {
+          id: user.emp_id,
+          employeeCode: user.emp_code!,
+          firstName: user.emp_first_name!,
+          lastName: user.emp_last_name!,
+          designation: user.emp_designation!,
+          avatarUrl: user.emp_avatar_url,
+          departmentId: user.emp_department_id,
+          managerId: user.emp_manager_id,
+          primaryOfficeId: user.emp_primary_office_id,
+        }
+      : null,
     permissionOverrides,
     strategy: "dev-impersonation",
   };
@@ -134,10 +148,10 @@ export const devAuthAdapter: AuthAdapter = {
     const fallbackEmail = serverEnv().DEV_AUTH_DEFAULT_USER;
     if (!fallbackEmail) return null;
 
-    const fallbackUser = await prisma.user.findFirst({
-      where: { email: fallbackEmail, deletedAt: null },
-      select: { id: true },
-    });
+    const fallbackUser = await queryOne<{ id: string }>(
+      `SELECT id FROM users WHERE email = $1 AND deleted_at IS NULL`,
+      [fallbackEmail],
+    );
     if (!fallbackUser) return null;
 
     return loadSession(fallbackUser.id);
