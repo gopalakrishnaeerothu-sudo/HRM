@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { prisma } from "@/lib/db";
+import { query, queryOne } from "@/server/db/query";
 import { isProduction, serverEnv } from "@/lib/env";
 import { errors, toPublicError } from "@/lib/errors";
 import { SESSION_COOKIE } from "@/server/auth/types";
@@ -32,20 +32,42 @@ export async function GET() {
   try {
     guard();
 
-    const users = await prisma.user.findMany({
-      where: { deletedAt: null, status: "ACTIVE" },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        avatarUrl: true,
-        organization: { select: { name: true, slug: true } },
-        employee: { select: { designation: true, employeeCode: true } },
-      },
-      orderBy: [{ role: "asc" }, { name: "asc" }],
-      take: 60,
-    });
+    // Deliberately not tenant-scoped: this endpoint exists to switch between
+    // demo accounts across organisations, and `guard()` above restricts it to
+    // development. It must never be reachable in production.
+    const rows = await query<{
+      id: string;
+      name: string;
+      email: string;
+      role: string;
+      avatar_url: string | null;
+      organization_name: string;
+      organization_slug: string;
+      designation: string | null;
+      employee_code: string | null;
+    }>(
+      `SELECT u.id, u.name, u.email, u.role, u.avatar_url,
+              o.name AS organization_name, o.slug AS organization_slug,
+              e.designation, e.employee_code
+         FROM users u
+         JOIN organizations o ON o.id = u.organization_id
+         LEFT JOIN employees e ON e.user_id = u.id AND e.deleted_at IS NULL
+        WHERE u.deleted_at IS NULL AND u.status = 'ACTIVE'
+        ORDER BY u.role ASC, u.name ASC
+        LIMIT 60`,
+    );
+
+    const users = rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      role: row.role,
+      avatarUrl: row.avatar_url,
+      organization: { name: row.organization_name, slug: row.organization_slug },
+      employee: row.employee_code
+        ? { designation: row.designation, employeeCode: row.employee_code }
+        : null,
+    }));
 
     return NextResponse.json({ data: users }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
@@ -64,10 +86,11 @@ export async function POST(request: Request) {
     const parsed = switchSchema.safeParse(await request.json());
     if (!parsed.success) throw errors.validation("Pick a user to view the app as.");
 
-    const user = await prisma.user.findFirst({
-      where: { id: parsed.data.userId, deletedAt: null, status: "ACTIVE" },
-      select: { id: true, name: true, role: true },
-    });
+    const user = await queryOne<{ id: string; name: string; role: string }>(
+      `SELECT id, name, role FROM users
+        WHERE id = $1 AND deleted_at IS NULL AND status = 'ACTIVE'`,
+      [parsed.data.userId],
+    );
     if (!user) throw errors.notFound("user");
 
     const store = await cookies();

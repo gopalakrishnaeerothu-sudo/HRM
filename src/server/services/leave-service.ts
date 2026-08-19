@@ -3,12 +3,12 @@ import "server-only";
 import type { LeaveStatus, LeaveType } from "@/server/db/types";
 import type { z } from "zod";
 
-import { prisma } from "@/lib/db";
 import { errors } from "@/lib/errors";
 import { startOfUtcDay } from "@/lib/time";
 import type { requestLeaveSchema, reviewLeaveSchema } from "@/lib/validation/attendance";
 import type { AuthSession } from "@/server/auth/types";
 import { hasPermission } from "@/server/auth/permissions";
+import { leaveRepository, type LeaveRecord } from "@/server/repositories/leave-repository";
 import { auditService } from "@/server/services/audit-service";
 import { notificationService } from "@/server/services/notification-service";
 import { resolveVisibleEmployeeIds, tenantScopeFor } from "@/server/services/access-service";
@@ -25,41 +25,12 @@ import { resolveVisibleEmployeeIds, tenantScopeFor } from "@/server/services/acc
 type RequestInput = z.infer<typeof requestLeaveSchema>;
 type ReviewInput = z.infer<typeof reviewLeaveSchema>;
 
-const leaveSelect = {
-  id: true,
-  type: true,
-  status: true,
-  startDate: true,
-  endDate: true,
-  days: true,
-  reason: true,
-  reviewedAt: true,
-  reviewNote: true,
-  createdAt: true,
-  employee: {
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      avatarUrl: true,
-      designation: true,
-      managerId: true,
-    },
-  },
-  reviewer: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
-} as const;
-
 export const leaveService = {
   /** The caller's own requests. */
   async listMine(session: AuthSession) {
     if (!session.employee) return [];
 
-    return prisma.leave.findMany({
-      where: { organizationId: session.organization.id, employeeId: session.employee.id },
-      select: leaveSelect,
-      orderBy: { startDate: "desc" },
-      take: 50,
-    });
+    return leaveRepository.listForEmployee(tenantScopeFor(session), session.employee.id);
   },
 
   /**
@@ -74,17 +45,11 @@ export const leaveService = {
 
     const envelope = await resolveVisibleEmployeeIds(session);
 
-    return prisma.leave.findMany({
-      where: {
-        organizationId: session.organization.id,
-        ...(envelope ? { employeeId: { in: [...envelope] } } : {}),
-        ...(status ? { status } : {}),
-        // Never surface your own request for your own approval.
-        ...(session.employee ? { NOT: { employeeId: session.employee.id } } : {}),
-      },
-      select: leaveSelect,
-      orderBy: [{ status: "asc" }, { startDate: "desc" }],
-      take: 60,
+    return leaveRepository.listForReview(tenantScopeFor(session), {
+      employeeIds: envelope,
+      status,
+      // Never surface your own request for your own approval.
+      excludeEmployeeId: session.employee?.id ?? null,
     });
   },
 
@@ -94,18 +59,11 @@ export const leaveService = {
 
     const yearStart = new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1));
 
-    const taken = await prisma.leave.groupBy({
-      by: ["type"],
-      where: {
-        organizationId: session.organization.id,
-        employeeId: session.employee.id,
-        status: "APPROVED",
-        startDate: { gte: yearStart },
-      },
-      _sum: { days: true },
-    });
-
-    const takenByType = new Map(taken.map((row) => [row.type, row._sum.days ?? 0]));
+    const takenByType = await leaveRepository.takenByType(
+      tenantScopeFor(session),
+      session.employee.id,
+      yearStart,
+    );
 
     // Entitlements are policy, not yet configurable per organisation — this is
     // the one place to change when they become a settings field.
@@ -125,33 +83,24 @@ export const leaveService = {
 
     // Overlapping requests are the most common data error here, and they make
     // the attendance lookup ambiguous — reject rather than pick one.
-    const overlapping = await prisma.leave.findFirst({
-      where: {
-        organizationId: scope.organizationId,
-        employeeId: employee.id,
-        status: { in: ["PENDING", "APPROVED"] },
-        startDate: { lte: startOfUtcDay(input.endDate) },
-        endDate: { gte: startOfUtcDay(input.startDate) },
-      },
-      select: { id: true, startDate: true, endDate: true },
-    });
+    const overlapping = await leaveRepository.findOverlapping(
+      scope,
+      employee.id,
+      startOfUtcDay(input.startDate),
+      startOfUtcDay(input.endDate),
+    );
 
     if (overlapping) {
       throw errors.conflict("You already have leave requested or approved that overlaps these dates.");
     }
 
-    const created = await prisma.leave.create({
-      data: {
-        organizationId: scope.organizationId,
-        employeeId: employee.id,
-        type: input.type,
-        status: "PENDING",
-        startDate: startOfUtcDay(input.startDate),
-        endDate: startOfUtcDay(input.endDate),
-        days: input.days,
-        reason: input.reason,
-      },
-      select: leaveSelect,
+    const created = await leaveRepository.create(scope, {
+      employeeId: employee.id,
+      type: input.type,
+      startDate: startOfUtcDay(input.startDate),
+      endDate: startOfUtcDay(input.endDate),
+      days: input.days,
+      reason: input.reason,
     });
 
     await notificationService.leaveRequested(
@@ -167,10 +116,7 @@ export const leaveService = {
   async review(session: AuthSession, leaveId: string, input: ReviewInput) {
     const scope = tenantScopeFor(session);
 
-    const leave = await prisma.leave.findFirst({
-      where: { id: leaveId, organizationId: scope.organizationId },
-      select: leaveSelect,
-    });
+    const leave = await leaveRepository.findById(scope, leaveId);
     if (!leave) throw errors.notFound("leave request");
 
     if (leave.status !== "PENDING") {
@@ -186,16 +132,18 @@ export const leaveService = {
       throw errors.notFound("leave request");
     }
 
-    const updated = await prisma.leave.update({
-      where: { id: leaveId },
-      data: {
-        status: input.decision,
-        reviewerId: session.employee?.id ?? null,
-        reviewedAt: new Date(),
-        reviewNote: input.reviewNote ?? null,
-      },
-      select: leaveSelect,
+    // Guarded on status = PENDING inside the UPDATE, so two reviewers acting
+    // at the same moment produce one decision and one 409 rather than a silent
+    // last-write-wins.
+    const decided = await leaveRepository.review(scope, leaveId, {
+      status: input.decision,
+      reviewerId: session.employee?.id ?? null,
+      reviewNote: input.reviewNote ?? null,
     });
+
+    if (!decided) throw errors.conflict("That request has already been decided.");
+
+    const updated = await leaveRepository.requireById(scope, leaveId);
 
     await auditService.record(scope, session, {
       action: "UPDATE",
@@ -220,19 +168,13 @@ export const leaveService = {
     const employee = session.employee;
     if (!employee) throw errors.forbidden("This account has no employee profile.");
 
-    const result = await prisma.leave.updateMany({
-      where: {
-        id: leaveId,
-        organizationId: session.organization.id,
-        employeeId: employee.id,
-        status: "PENDING",
-      },
-      data: { status: "CANCELLED" },
-    });
+    const cancelled = await leaveRepository.cancelPending(
+      tenantScopeFor(session),
+      leaveId,
+      employee.id,
+    );
 
-    if (result.count === 0) {
-      throw errors.notFound("pending leave request");
-    }
+    if (!cancelled) throw errors.notFound("pending leave request");
 
     return { id: leaveId };
   },
@@ -241,17 +183,10 @@ export const leaveService = {
   async upcomingForTeam(session: AuthSession, from: Date, to: Date) {
     const envelope = await resolveVisibleEmployeeIds(session);
 
-    return prisma.leave.findMany({
-      where: {
-        organizationId: session.organization.id,
-        status: "APPROVED",
-        ...(envelope ? { employeeId: { in: [...envelope] } } : {}),
-        startDate: { lte: startOfUtcDay(to) },
-        endDate: { gte: startOfUtcDay(from) },
-      },
-      select: leaveSelect,
-      orderBy: { startDate: "asc" },
-      take: 40,
+    return leaveRepository.listApprovedInRange(tenantScopeFor(session), {
+      employeeIds: envelope,
+      from: startOfUtcDay(from),
+      to: startOfUtcDay(to),
     });
   },
 };
@@ -277,4 +212,4 @@ const LEAVE_TYPE_SHORT: Record<LeaveType, string> = {
   COMP_OFF: "comp off",
 };
 
-export type LeaveRecord = Awaited<ReturnType<typeof leaveService.listMine>>[number];
+export type { LeaveRecord };

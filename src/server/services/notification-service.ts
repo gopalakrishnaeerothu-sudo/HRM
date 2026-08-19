@@ -2,7 +2,8 @@ import "server-only";
 
 import type { NotificationType } from "@/server/db/types";
 
-import { prisma } from "@/lib/db";
+import { query } from "@/server/db/query";
+import { exec } from "@/server/db/tenant";
 import type { AuthSession } from "@/server/auth/types";
 import { notificationRepository } from "@/server/repositories/org-repository";
 import type { TaskDetail, TaskSummary } from "@/server/repositories/task-repository";
@@ -25,17 +26,20 @@ async function usersForEmployees(
 ): Promise<Array<{ userId: string; employeeId: string }>> {
   if (employeeIds.length === 0) return [];
 
-  const rows = await prisma.employee.findMany({
-    where: {
-      id: { in: [...employeeIds] },
-      organizationId: scope.organizationId,
-      deletedAt: null,
-      userId: { not: null },
-    },
-    select: { id: true, userId: true },
-  });
+  // user_id IS NOT NULL is the filter that matters: an employee record with no
+  // linked account has nowhere to receive a notification.
+  const rows = await query<{ id: string; user_id: string }>(
+    `SELECT id, user_id
+       FROM employees
+      WHERE id = ANY($1::uuid[])
+        AND organization_id = $2
+        AND deleted_at IS NULL
+        AND user_id IS NOT NULL`,
+    [[...employeeIds], scope.organizationId],
+    exec(scope),
+  );
 
-  return rows.flatMap((row) => (row.userId ? [{ userId: row.userId, employeeId: row.id }] : []));
+  return rows.map((row) => ({ userId: row.user_id, employeeId: row.id }));
 }
 
 interface DeliverInput {
@@ -136,10 +140,12 @@ export const notificationService = {
 
   /** HR announcement to every employee with a user account. */
   async broadcast(scope: TenantScope, session: AuthSession, title: string, body: string, linkUrl?: string) {
-    const employees = await prisma.employee.findMany({
-      where: { organizationId: scope.organizationId, deletedAt: null, userId: { not: null } },
-      select: { id: true },
-    });
+    const employees = await query<{ id: string }>(
+      `SELECT id FROM employees
+        WHERE organization_id = $1 AND deleted_at IS NULL AND user_id IS NOT NULL`,
+      [scope.organizationId],
+      exec(scope),
+    );
 
     await deliver(scope, {
       type: "ANNOUNCEMENT",

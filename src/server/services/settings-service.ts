@@ -2,7 +2,8 @@ import "server-only";
 
 import type { z } from "zod";
 
-import { prisma } from "@/lib/db";
+import { execute, query, queryExactlyOne } from "@/server/db/query";
+import { exec } from "@/server/db/tenant";
 import type {
   attendancePolicySchema,
   organizationProfileSchema,
@@ -157,16 +158,22 @@ export const settingsService = {
   async addHoliday(session: AuthSession, input: { name: string; date: Date; isOptional: boolean }) {
     const scope = tenantScopeFor(session);
 
-    const created = await prisma.holiday.create({
-      data: {
-        organizationId: scope.organizationId,
-        name: input.name,
-        date: new Date(
+    // Normalised to midnight UTC so a holiday lands on the same calendar day
+    // regardless of the server's timezone.
+    const created = await queryExactlyOne<{ id: string; date: Date; name: string; is_optional: boolean }>(
+      `INSERT INTO holidays (organization_id, name, date, is_optional)
+       VALUES ($1, $2, $3::date, $4)
+       RETURNING id, name, date, is_optional`,
+      [
+        scope.organizationId,
+        input.name,
+        new Date(
           Date.UTC(input.date.getUTCFullYear(), input.date.getUTCMonth(), input.date.getUTCDate()),
         ),
-        isOptional: input.isOptional,
-      },
-    });
+        input.isOptional,
+      ],
+      exec(scope),
+    );
 
     await auditService.record(scope, session, {
       action: "CREATE",
@@ -181,10 +188,14 @@ export const settingsService = {
   async removeHoliday(session: AuthSession, holidayId: string) {
     const scope = tenantScopeFor(session);
 
-    const removed = await prisma.holiday.deleteMany({
-      where: { id: holidayId, organizationId: scope.organizationId },
-    });
-    if (removed.count === 0) return { id: holidayId, removed: false };
+    // organization_id in the WHERE is the tenant boundary: a holiday id from
+    // another organisation deletes nothing rather than deleting theirs.
+    const removed = await execute(
+      `DELETE FROM holidays WHERE id = $1 AND organization_id = $2`,
+      [holidayId, scope.organizationId],
+      exec(scope),
+    );
+    if (removed === 0) return { id: holidayId, removed: false };
 
     await auditService.record(scope, session, {
       action: "DELETE",
@@ -198,15 +209,23 @@ export const settingsService = {
 
   async listHolidays(session: AuthSession) {
     const year = new Date().getUTCFullYear();
-    return prisma.holiday.findMany({
-      where: {
-        organizationId: session.organization.id,
-        date: {
-          gte: new Date(Date.UTC(year, 0, 1)),
-          lte: new Date(Date.UTC(year + 1, 11, 31)),
-        },
-      },
-      orderBy: { date: "asc" },
-    });
+    const rows = await query<{ id: string; name: string; date: Date; is_optional: boolean }>(
+      `SELECT id, name, date, is_optional
+         FROM holidays
+        WHERE organization_id = $1 AND date BETWEEN $2::date AND $3::date
+        ORDER BY date ASC`,
+      [
+        session.organization.id,
+        new Date(Date.UTC(year, 0, 1)),
+        new Date(Date.UTC(year + 1, 11, 31)),
+      ],
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      date: row.date,
+      isOptional: row.is_optional,
+    }));
   },
 };

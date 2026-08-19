@@ -2,7 +2,8 @@ import "server-only";
 
 import type { z } from "zod";
 
-import { prisma } from "@/lib/db";
+import { count } from "@/server/db/query";
+import { exec } from "@/server/db/tenant";
 import { errors } from "@/lib/errors";
 import type { createTeamSchema, updateTeamSchema } from "@/lib/validation/organization";
 import type { AuthSession } from "@/server/auth/types";
@@ -36,7 +37,7 @@ export const teamService = {
     });
 
     const slug = slugify(input.name);
-    if (await isSlugTaken(scope.organizationId, slug)) {
+    if (await teamRepository.isSlugTaken(scope, slug)) {
       throw errors.validation("A team with that name already exists.", {
         name: ["Already used by another team"],
       });
@@ -114,9 +115,13 @@ export const teamService = {
     const scope = tenantScopeFor(session);
     const team = await teamRepository.requireById(scope, teamId);
 
-    const openTasks = await prisma.task.count({
-      where: { organizationId: scope.organizationId, teamId, deletedAt: null, status: { not: "COMPLETED" } },
-    });
+    const openTasks = await count(
+      `SELECT count(*) FROM tasks
+        WHERE organization_id = $1 AND team_id = $2
+          AND deleted_at IS NULL AND status <> 'COMPLETED'`,
+      [scope.organizationId, teamId],
+      exec(scope),
+    );
     if (openTasks > 0) {
       throw errors.precondition(
         `${team.name} still has ${openTasks} open ${openTasks === 1 ? "task" : "tasks"}. Reassign or close them first.`,
@@ -146,10 +151,3 @@ function slugify(name: string): string {
     .slice(0, 60);
 }
 
-async function isSlugTaken(organizationId: string, slug: string): Promise<boolean> {
-  const found = await prisma.team.findFirst({
-    where: { organizationId, slug },
-    select: { id: true },
-  });
-  return found !== null;
-}
