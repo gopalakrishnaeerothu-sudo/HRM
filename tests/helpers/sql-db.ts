@@ -71,3 +71,82 @@ export async function createSqlTenant(slug: string, name: string): Promise<strin
   );
   return rows[0]!.id;
 }
+
+/**
+ * A fully-formed tenant: organisation, office with a primary perimeter,
+ * department, user and employee.
+ *
+ * The legacy integration suites (attendance flow, tenant isolation) used a
+ * Prisma-built equivalent against a camelCase database. Now that repositories
+ * emit snake_case SQL there is only one schema — the migrated one — so the
+ * fixture is built here with the same statements the application would use.
+ */
+export async function createSqlTenant2(options: {
+  slug: string;
+  name: string;
+  officeLatitude?: number;
+  officeLongitude?: number;
+  radiusMeters?: number;
+}) {
+  const pool = sqlTestPool();
+  const latitude = options.officeLatitude ?? 16.30656;
+  const longitude = options.officeLongitude ?? 80.4365;
+
+  const { rows: orgRows } = await pool.query<{ id: string }>(
+    `INSERT INTO organizations (slug, name, timezone)
+     VALUES ($1, $2, 'Asia/Kolkata') RETURNING id`,
+    [options.slug, options.name],
+  );
+  const organization = { id: orgRows[0]!.id };
+
+  // Office and perimeter in one statement: an office with no zone is a site
+  // nobody can check in to, which would make the fixture unusable.
+  const { rows: officeRows } = await pool.query<{ id: string; geofence_id: string }>(
+    `WITH new_office AS (
+       INSERT INTO offices (organization_id, name, code, address_line, city,
+                            latitude, longitude)
+       VALUES ($1, $2, 'HQ', '1 Test Street', 'Guntur', $3, $4)
+       RETURNING id
+     ), zone AS (
+       INSERT INTO office_geofences (office_id, name, latitude, longitude,
+                                     radius_meters, is_primary)
+       SELECT id, 'Main perimeter', $3, $4, $5, TRUE FROM new_office
+       RETURNING id, office_id
+     )
+     SELECT zone.office_id AS id, zone.id AS geofence_id FROM zone`,
+    [organization.id, `${options.name} HQ`, latitude, longitude, options.radiusMeters ?? 100],
+  );
+  const office = {
+    id: officeRows[0]!.id,
+    latitude,
+    longitude,
+    geofences: [{ id: officeRows[0]!.geofence_id }],
+  };
+
+  const { rows: deptRows } = await pool.query<{ id: string }>(
+    `INSERT INTO departments (organization_id, name, code)
+     VALUES ($1, 'Engineering', 'ENG') RETURNING id`,
+    [organization.id],
+  );
+  const department = { id: deptRows[0]!.id };
+
+  const { rows: userRows } = await pool.query<{ id: string }>(
+    `INSERT INTO users (organization_id, email, name, role)
+     VALUES ($1, $2, 'Test Owner', 'OWNER') RETURNING id`,
+    [organization.id, `owner@${options.slug}.example`],
+  );
+  const user = { id: userRows[0]!.id };
+
+  const { rows: empRows } = await pool.query<{ id: string }>(
+    `INSERT INTO employees (organization_id, user_id, employee_code, first_name,
+                            last_name, email, designation, department_id,
+                            primary_office_id, joined_at)
+     VALUES ($1, $2, 'EMP-0001', 'Test', 'Owner', $3, 'Founder', $4, $5,
+             '2024-01-01')
+     RETURNING id`,
+    [organization.id, user.id, `owner@${options.slug}.example`, department.id, office.id],
+  );
+  const employee = { id: empRows[0]!.id };
+
+  return { organization, office, department, user, employee };
+}

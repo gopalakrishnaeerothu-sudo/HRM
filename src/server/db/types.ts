@@ -108,7 +108,14 @@ export type AuditAction =
   | "PERMISSION_CHANGE"
   | "GEOFENCE_CHANGE"
   | "ATTENDANCE_OVERRIDE"
-  | "EXPORT";
+  | "EXPORT"
+  // Security events — added with the authentication schema, migration 017.
+  | "LOGIN_FAILURE"
+  | "PASSWORD_CHANGED"
+  | "PASSWORD_RESET_REQUESTED"
+  | "PASSWORD_RESET_COMPLETED"
+  | "ACCOUNT_DISABLED"
+  | "SESSION_REVOKED";
 
 // ---------------------------------------------------------------------------
 // Shared helpers

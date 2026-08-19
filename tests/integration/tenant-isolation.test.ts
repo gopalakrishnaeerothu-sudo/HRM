@@ -6,12 +6,12 @@ import { taskRepository } from "@/server/repositories/task-repository";
 import { assertBelongsToTenant } from "@/server/db/tenant";
 import type { TenantScope } from "@/server/db/tenant";
 import {
-  createTenant,
-  disconnectTestDb,
-  hasTestDatabase,
-  resetDatabase,
-  testDb,
-} from "../helpers/db";
+  createSqlTenant2 as createTenant,
+  disconnectSqlTestDb as disconnectTestDb,
+  hasSqlTestDatabase as hasTestDatabase,
+  resetSqlDatabase as resetDatabase,
+  sqlTestPool,
+} from "../helpers/sql-db";
 
 /**
  * Multi-tenant isolation.

@@ -42,7 +42,17 @@ function loadDotEnv(): void {
 
 loadDotEnv();
 
-const testUrl = process.env.TEST_DATABASE_URL;
+// One test database, not two.
+//
+// Repositories used to be Prisma and read a camelCase schema; they now emit
+// snake_case SQL against the schema the migrations build. Keeping two
+// differently-shaped test databases meant fixtures were written to one and
+// queried from the other, which surfaced as "column organization_id does not
+// exist" rather than as the wiring mistake it actually was.
+//
+// SQL_TEST_DATABASE_URL is the migrated database and wins. TEST_DATABASE_URL
+// remains as a fallback so an existing local .env keeps working.
+const testUrl = process.env.SQL_TEST_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
 
 if (testUrl) {
   process.env.DATABASE_URL = testUrl;

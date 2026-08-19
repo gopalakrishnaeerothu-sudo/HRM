@@ -9,12 +9,13 @@ import { tenantScopeFor } from "@/server/services/access-service";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import type { AuditAction } from "@/server/db/types";
 import { EmptyState } from "@/components/ui/states";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
 
 export const metadata: Metadata = { title: "Audit log" };
 
-const ACTION_TONE = {
+const ACTION_TONE: Record<AuditAction, "success" | "info" | "critical" | "neutral" | "warning" | "serious"> = {
   CREATE: "success",
   UPDATE: "info",
   DELETE: "critical",
@@ -24,7 +25,17 @@ const ACTION_TONE = {
   GEOFENCE_CHANGE: "warning",
   ATTENDANCE_OVERRIDE: "serious",
   EXPORT: "neutral",
-} as const;
+
+  // Security events. A single failed sign-in is ordinary and a run of them is
+  // not, but the log shows one row at a time — "warning" reads correctly for
+  // both, where "critical" would cry wolf on every mistyped password.
+  LOGIN_FAILURE: "warning",
+  PASSWORD_CHANGED: "info",
+  PASSWORD_RESET_REQUESTED: "warning",
+  PASSWORD_RESET_COMPLETED: "info",
+  ACCOUNT_DISABLED: "critical",
+  SESSION_REVOKED: "warning",
+};
 
 /**
  * Audit trail.

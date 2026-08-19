@@ -1,4 +1,4 @@
-import { hash, verify, Algorithm, Version } from "@node-rs/argon2";
+import { hash, verify } from "@node-rs/argon2";
 
 /**
  * Password hashing — Argon2id.
@@ -23,9 +23,19 @@ import { hash, verify, Algorithm, Version } from "@node-rs/argon2";
  * that it should be upgraded next time the plaintext is briefly available.
  */
 
+/**
+ * The numeric literals are `Algorithm.Argon2id` and `Version.V0x13`. They are
+ * written out because the library declares them as ambient `const enum`s,
+ * which `isolatedModules` — required by Next's SWC pipeline — cannot read at
+ * runtime. The values are fixed by the Argon2 specification, not by the
+ * library, so writing them here is safe; `assertParams` below fails loudly if
+ * that ever stops being true.
+ */
 const PARAMS = {
-  algorithm: Algorithm.Argon2id,
-  version: Version.V0x13,
+  /** Algorithm.Argon2id */
+  algorithm: 2,
+  /** Version.V0x13 — Argon2 v1.3, the current version. */
+  version: 1,
   /** KiB. */
   memoryCost: 19456,
   timeCost: 2,
@@ -46,7 +56,32 @@ export const PASSWORD_MAX_LENGTH = 200;
 
 /** Hash a plaintext password for storage. Never log or return the input. */
 export async function hashPassword(plaintext: string): Promise<string> {
-  return hash(normalise(plaintext), PARAMS);
+  const digest = await hash(normalise(plaintext), PARAMS);
+  assertArgon2id(digest);
+  return digest;
+}
+
+/**
+ * Confirm the library actually produced Argon2id at the version we asked for.
+ *
+ * The algorithm and version above are numeric literals standing in for the
+ * library's ambient const enums, so a future release that renumbered them
+ * would silently start writing a different algorithm. This turns that into a
+ * loud failure on the first hash instead of a quiet weakening of every
+ * password. Checked once — the answer cannot vary within a process.
+ */
+let paramsVerified = false;
+function assertArgon2id(digest: string): void {
+  if (paramsVerified) return;
+
+  if (!digest.startsWith("$argon2id$v=19$")) {
+    throw new Error(
+      `Password hashing produced "${digest.slice(0, 20)}…" rather than Argon2id v1.3. ` +
+        "Check the algorithm/version constants in src/server/auth/password.ts against @node-rs/argon2.",
+    );
+  }
+
+  paramsVerified = true;
 }
 
 /**

@@ -7,12 +7,12 @@ import { officeRepository } from "@/server/repositories/office-repository";
 import type { TenantScope } from "@/server/db/tenant";
 import { computeDay } from "@/server/services/attendance-rules";
 import {
-  createTenant,
-  disconnectTestDb,
-  hasTestDatabase,
-  resetDatabase,
-  testDb,
-} from "../helpers/db";
+  createSqlTenant2 as createTenant,
+  disconnectSqlTestDb as disconnectTestDb,
+  hasSqlTestDatabase as hasTestDatabase,
+  resetSqlDatabase as resetDatabase,
+  sqlTestPool,
+} from "../helpers/sql-db";
 
 /**
  * Attendance persistence, end to end through the repository layer.
@@ -107,13 +107,18 @@ describe.skipIf(!hasTestDatabase)("attendance flow", () => {
       riskFlags: verdict.riskFlags,
     });
 
-    const events = await testDb().attendanceEvent.findMany({
-      where: { attendanceRecordId: record.id },
-    });
+    const { rows: events } = await sqlTestPool().query<{
+      verification: string;
+      distance_meters: number | null;
+    }>(
+      `SELECT verification, distance_meters FROM attendance_events
+        WHERE attendance_record_id = $1`,
+      [record.id],
+    );
 
     expect(events).toHaveLength(1);
     expect(events[0]?.verification).toBe("VERIFIED");
-    expect(events[0]?.distanceMeters).toBeCloseTo(42, 0);
+    expect(events[0]?.distance_meters).toBeCloseTo(42, 0);
   });
 
   it("logs a refused check-in without creating an attendance record", async () => {
@@ -180,9 +185,10 @@ describe.skipIf(!hasTestDatabase)("attendance flow", () => {
       // what matters is the row count below.
     });
 
-    const rows = await testDb().attendanceRecord.findMany({
-      where: { employeeId: tenant.employee.id, date: toDateKey(day) },
-    });
+    const { rows } = await sqlTestPool().query(
+      `SELECT id FROM attendance_records WHERE employee_id = $1 AND date = $2`,
+      [tenant.employee.id, toDateKey(day)],
+    );
 
     expect(rows).toHaveLength(1);
   });
