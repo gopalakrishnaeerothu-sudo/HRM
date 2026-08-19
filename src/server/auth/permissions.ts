@@ -39,6 +39,12 @@ export const PERMISSIONS = [
   // Leave
   "leave:request",
   "leave:approve",
+  // User access management
+  "user:read",
+  "user:invite",
+  "user:approve",
+  "user:manage",
+  "user:role:assign",
   // Platform
   "report:read",
   "report:export",
@@ -80,6 +86,14 @@ const HR_PERMISSIONS: Permission[] = [
   "attendance:override",
   "report:export",
   "notification:broadcast",
+  // Onboarding is HR's job, so the access queue is too. What HR *cannot* do is
+  // reach above itself: every one of these is additionally bounded by
+  // `canActOn` and `canAssignRole` below, which cap HR at MANAGER.
+  "user:read",
+  "user:invite",
+  "user:approve",
+  "user:manage",
+  "user:role:assign",
 ];
 
 const ADMIN_PERMISSIONS: Permission[] = [
@@ -132,6 +146,65 @@ export function isOrgWideRole(role: UserRole): boolean {
 
 export function isManagerialRole(role: UserRole): boolean {
   return isOrgWideRole(role) || role === "MANAGER";
+}
+
+// ---------------------------------------------------------------------------
+// Role seniority
+//
+// A permission answers "may this role manage users at all". It cannot answer
+// "may this particular administrator disable the owner", because that depends
+// on both parties. These two functions answer that, and every access-
+// management path runs through them.
+//
+// The rule is one sentence: you may act on people below you, and grant roles
+// below you. It is what stops the two escalations that matter — an HR admin
+// promoting themselves to OWNER, and an ADMIN disabling the OWNER's account.
+// ---------------------------------------------------------------------------
+
+const ROLE_RANK: Record<UserRole, number> = {
+  EMPLOYEE: 0,
+  MANAGER: 1,
+  HR: 2,
+  ADMIN: 3,
+  OWNER: 4,
+};
+
+/**
+ * Whether `actor` may perform an access action on an account holding `target`.
+ *
+ * Strictly greater, so peers cannot act on each other: one ADMIN disabling
+ * another is how a compromised admin account locks the real ones out. OWNER is
+ * above everything and is therefore untouchable here, which is precisely the
+ * "cannot be removed by an admin" property ROLE_PERMISSIONS notes but cannot
+ * itself enforce.
+ *
+ * Self-action is rejected by the caller rather than here — the service layer
+ * has a clearer message for it, and conflating "you are your own peer" with
+ * "you outrank nobody" would make this function's contract fuzzier.
+ */
+export function canActOn(actor: UserRole, target: UserRole): boolean {
+  return ROLE_RANK[actor] > ROLE_RANK[target];
+}
+
+/**
+ * Whether `actor` may grant `target` to somebody.
+ *
+ * Same rule, and it is deliberately the same bound: an actor who could grant
+ * their own role could clone themselves, and an actor who could grant a higher
+ * one could escalate through a proxy account. OWNER is never grantable through
+ * this surface at all — transferring ownership is a different operation with
+ * different confirmations, not a dropdown on the users table.
+ */
+export function canAssignRole(actor: UserRole, target: UserRole): boolean {
+  if (target === "OWNER") return false;
+  return ROLE_RANK[actor] > ROLE_RANK[target];
+}
+
+/** The roles `actor` may choose from, for rendering a dropdown. */
+export function assignableRoles(actor: UserRole): UserRole[] {
+  return (Object.keys(ROLE_RANK) as UserRole[])
+    .filter((role) => canAssignRole(actor, role))
+    .sort((a, b) => ROLE_RANK[b] - ROLE_RANK[a]);
 }
 
 export const ROLE_LABELS: Record<UserRole, string> = {

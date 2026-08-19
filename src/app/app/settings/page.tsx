@@ -345,6 +345,27 @@ export default async function SettingsPage() {
                   </CardContent>
                 </Card>
 
+                {can(session, "user:read") ? (
+                  <Card>
+                    <CardHeader>
+                      <div className="min-w-0">
+                        <CardTitle>
+                          <span className="flex items-center gap-2">
+                            <ShieldCheck className="size-4 text-ink-muted" aria-hidden />
+                            Users &amp; access
+                          </span>
+                        </CardTitle>
+                        <p className="mt-1 text-sm text-ink-muted">
+                          Approve signup requests, assign roles and withdraw access.
+                        </p>
+                      </div>
+                      <Button variant="secondary" size="sm" asChild>
+                        <Link href="/app/settings/access">Open</Link>
+                      </Button>
+                    </CardHeader>
+                  </Card>
+                ) : null}
+
                 {can(session, "audit:read") ? (
                   <Card>
                     <CardHeader>

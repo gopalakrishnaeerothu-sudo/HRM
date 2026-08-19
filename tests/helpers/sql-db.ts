@@ -3,9 +3,9 @@ import { Pool } from "pg";
 /**
  * Test access to a SQL-migrated database.
  *
- * Separate from `helpers/db.ts`, which talks to the Prisma-shaped schema. The
- * two schemas differ (snake_case versus camelCase columns), so they cannot
- * share a database while the port is in progress.
+ * The one database helper. An earlier `helpers/db.ts` talked to a
+ * Prisma-shaped schema with camelCase columns; that schema and that helper are
+ * both gone.
  *
  * Point SQL_TEST_DATABASE_URL at a THROWAWAY database and migrate it first:
  *
@@ -76,10 +76,8 @@ export async function createSqlTenant(slug: string, name: string): Promise<strin
  * A fully-formed tenant: organisation, office with a primary perimeter,
  * department, user and employee.
  *
- * The legacy integration suites (attendance flow, tenant isolation) used a
- * Prisma-built equivalent against a camelCase database. Now that repositories
- * emit snake_case SQL there is only one schema — the migrated one — so the
- * fixture is built here with the same statements the application would use.
+ * Built with the same statements the application would use, against the one
+ * schema the migrations produce.
  */
 export async function createSqlTenant2(options: {
   slug: string;

@@ -1,16 +1,19 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
-
 import type { TaskActivityType } from "@/server/db/types";
 
-import { prisma } from "@/lib/db";
 import { errors } from "@/lib/errors";
 import type { CreateTaskInput, TaskQuery, UpdateTaskInput } from "@/lib/validation/task";
 import { STATUS_IMPLIED_PROGRESS, TASK_PRIORITY_LABELS, TASK_STATUS_LABELS } from "@/lib/validation/task";
 import type { AuthSession } from "@/server/auth/types";
 import { hasPermission } from "@/server/auth/permissions";
-import { taskRepository, type TaskDetail, type TaskSummary } from "@/server/repositories/task-repository";
+import {
+  taskRepository,
+  type TaskActivityEntry,
+  type TaskDetail,
+  type TaskSummary,
+  type TaskUpdate,
+} from "@/server/repositories/task-repository";
 import { transaction } from "@/server/db/transaction";
 import { assertBelongsToTenant, type TenantScope } from "@/server/db/tenant";
 import { resolveVisibleEmployeeIds, tenantScopeFor } from "@/server/services/access-service";
@@ -177,8 +180,8 @@ export const taskService = {
       });
     }
 
-    const data: Prisma.TaskUpdateInput = {};
-    const activities: Array<Omit<Prisma.TaskActivityUncheckedCreateInput, "organizationId">> = [];
+    const data: TaskUpdate = {};
+    const activities: TaskActivityEntry[] = [];
 
     if (input.title !== undefined && input.title !== before.title) {
       data.title = input.title;
@@ -256,49 +259,40 @@ export const taskService = {
     if (input.actualHours !== undefined) data.actualHours = input.actualHours;
     if (input.tags !== undefined) data.tags = input.tags;
     if (input.boardOrder !== undefined) data.boardOrder = input.boardOrder;
-    if (input.teamId !== undefined) {
-      data.team = input.teamId ? { connect: { id: input.teamId } } : { disconnect: true };
-    }
+    if (input.teamId !== undefined) data.teamId = input.teamId ?? null;
 
     const newAssignees = input.assigneeIds;
 
-    await prisma.$transaction(async (tx) => {
-      await tx.task.updateMany({
-        where: { id: taskId, organizationId: scope.organizationId, deletedAt: null },
-        data: data as Prisma.TaskUpdateManyMutationInput,
-      });
+    // One transaction: the field changes, the assignee swap and the timeline
+    // entries describing both must land together, or the timeline ends up
+    // claiming a change the task does not show.
+    await transaction(async (tx) => {
+      const txScope: TenantScope = { organizationId: scope.organizationId, tx };
 
-      // team/relation updates cannot go through updateMany, so apply separately.
-      if (input.teamId !== undefined) {
-        await tx.task.update({ where: { id: taskId }, data: { teamId: input.teamId ?? null } });
-      }
+      // The team change is no longer a separate statement — the repository
+      // takes team_id like any other column, which is what made Prisma need
+      // two writes here.
+      await taskRepository.update(txScope, taskId, data);
 
       if (newAssignees) {
         const previousIds = before.assignees.map((assignee) => assignee.employee.id).sort();
         const nextIds = [...newAssignees].sort();
 
         if (JSON.stringify(previousIds) !== JSON.stringify(nextIds)) {
-          await tx.taskAssignee.deleteMany({ where: { taskId } });
-          if (newAssignees.length > 0) {
-            await tx.taskAssignee.createMany({
-              data: newAssignees.map((employeeId) => ({
-                taskId,
-                employeeId,
-                isOwner: employeeId === input.ownerId,
-              })),
-              skipDuplicates: true,
-            });
-          }
+          await taskRepository.replaceAssignees(
+            txScope,
+            taskId,
+            newAssignees,
+            input.ownerId ?? null,
+          );
           activities.push(
             activity(taskId, actorEmployeeId, "ASSIGNED", `changed the assignees`),
           );
         }
       }
 
-      if (activities.length > 0) {
-        await tx.taskActivity.createMany({
-          data: activities.map((entry) => ({ ...entry, organizationId: scope.organizationId })),
-        });
+      for (const entry of activities) {
+        await taskRepository.recordActivity(txScope, entry);
       }
     });
 
@@ -319,22 +313,16 @@ export const taskService = {
     const task = await this.detail(session, taskId);
     const authorId = session.employee?.id ?? null;
 
-    const comment = await prisma.$transaction(async (tx) => {
-      const created = await tx.taskComment.create({
-        data: { organizationId: scope.organizationId, taskId, authorId, body },
-        select: {
-          id: true,
-          body: true,
-          createdAt: true,
-          author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
-        },
-      });
+    const comment = await transaction(async (tx) => {
+      const txScope: TenantScope = { organizationId: scope.organizationId, tx };
 
-      await tx.taskActivity.create({
-        data: {
-          organizationId: scope.organizationId,
-          ...activity(taskId, authorId, "COMMENTED", "added a comment"),
-        },
+      const created = await taskRepository.addComment(txScope, taskId, authorId, body);
+      // Null means the task is not in this tenant. `detail` above already
+      // proved otherwise, so this is a genuine failure rather than a 404.
+      if (!created) throw errors.internal();
+
+      await taskRepository.recordActivity(txScope, {
+        ...activity(taskId, authorId, "COMMENTED", "added a comment"),
       });
 
       return created;
@@ -348,14 +336,20 @@ export const taskService = {
     const scope = tenantScopeFor(session);
     await this.detail(session, taskId);
 
-    const position = await prisma.subtask.count({ where: { taskId } });
-    const created = await prisma.subtask.create({ data: { taskId, title, position } });
+    // Position is allocated inside the INSERT, so two people adding a subtask
+    // at the same moment cannot both claim the same slot — which the previous
+    // count-then-insert allowed.
+    const created = await transaction(async (tx) => {
+      const txScope: TenantScope = { organizationId: scope.organizationId, tx };
 
-    await prisma.taskActivity.create({
-      data: {
-        organizationId: scope.organizationId,
+      const subtask = await taskRepository.addSubtask(txScope, taskId, title);
+      if (!subtask) throw errors.internal();
+
+      await taskRepository.recordActivity(txScope, {
         ...activity(taskId, session.employee?.id ?? null, "SUBTASK_ADDED", `added subtask “${title}”`),
-      },
+      });
+
+      return subtask;
     });
 
     return created;
@@ -365,18 +359,12 @@ export const taskService = {
     const scope = tenantScopeFor(session);
     await this.detail(session, taskId);
 
-    const result = await prisma.subtask.updateMany({
-      where: { id: subtaskId, taskId },
-      data: { isCompleted, completedAt: isCompleted ? new Date() : null },
-    });
-    if (result.count === 0) throw errors.notFound("subtask");
+    const updated = await taskRepository.setSubtaskCompletion(scope, subtaskId, isCompleted);
+    if (!updated) throw errors.notFound("subtask");
 
     if (isCompleted) {
-      await prisma.taskActivity.create({
-        data: {
-          organizationId: scope.organizationId,
-          ...activity(taskId, session.employee?.id ?? null, "SUBTASK_COMPLETED", "completed a subtask"),
-        },
+      await taskRepository.recordActivity(scope, {
+        ...activity(taskId, session.employee?.id ?? null, "SUBTASK_COMPLETED", "completed a subtask"),
       });
     }
 

@@ -73,28 +73,30 @@ constrained together, so Google, Microsoft and SSO subjects map onto a user
 without a schema change. `AuthProvider` already enumerates
 `PASSWORD | OTP | GOOGLE | MICROSOFT | SSO`.
 
-### Sketch of a session-cookie adapter
+### The session-cookie adapter
 
-```ts
-async getSession(): Promise<AuthSession | null> {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  if (!token) return null;
+Implemented in `production-adapter.ts`, backed by `session-store.ts`. The
+cookie carries 32 random bytes; only its SHA-256 is stored, so a leaked backup
+yields nothing replayable. Lookup, tenant scope and account status resolve in
+one statement:
 
-  const tokenHash = createHash("sha256").update(token).digest("hex");
-
-  const session = await prisma.session.findFirst({
-    where: { tokenHash, revokedAt: null, expiresAt: { gt: new Date() } },
-    select: { userId: true },
-  });
-  if (!session) return null;
-
-  return loadSession(session.userId);   // same builder the dev adapter uses
-}
+```sql
+SELECT … FROM sessions s
+  JOIN users u         ON u.id = s.user_id
+  JOIN organizations o ON o.id = u.organization_id
+ WHERE s.token_hash = $1
+   AND s.revoked_at IS NULL
+   AND s.expires_at > NOW()
+   AND u.status = 'ACTIVE'
 ```
 
-Set the cookie `httpOnly`, `secure` (in production), `sameSite: "lax"`, and
-scoped to `/`. The route-handler wrapper in `src/server/api/handler.ts` already
-performs an origin check on every mutation, which pairs with `SameSite=Lax`.
+Putting the status and soft-delete filters in the lookup rather than checking
+them afterwards is what makes disabling an account take effect on the very
+next request, with no session sweep.
+
+The cookie is `httpOnly`, `secure` in production, `sameSite: "lax"`, scoped to
+`/`. `server/http/origin.ts` adds an origin check on authentication mutations,
+which pairs with `SameSite=Lax`.
 
 ## Where authorisation happens
 
@@ -104,8 +106,8 @@ Authentication answers *who*; authorisation answers *what*. They are separate:
 - **`resolveVisibleEmployeeIds(session)`** in `services/access-service.ts` —
   the row-level envelope. A manager sees their report tree; an employee sees
   themselves.
-- **`TenantScope`** in `repositories/tenant.ts` — every query is filtered by
-  `organizationId`.
+- **`TenantScope`** in `db/tenant.ts` — every query is filtered by
+  `organization_id`.
 
 All three are server-side. The client's permission list exists only to decide
 which links to *draw*; hiding a link is not access control, and every route

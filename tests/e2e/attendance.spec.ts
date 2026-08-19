@@ -15,7 +15,7 @@ import { expect, test } from "@playwright/test";
  * Requires: seeded database (`npm run db:seed`) and DEV_AUTH_ENABLED=true.
  */
 
-/** Guntur HQ, from prisma/seed-data.ts. */
+/** Guntur HQ, from seed/data.ts. */
 const OFFICE = { latitude: 16.30656, longitude: 80.4365 };
 
 /** ~250 m north of the office — outside the seeded 100 m perimeter. */

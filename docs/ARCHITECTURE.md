@@ -1,10 +1,10 @@
 # TaskFlow HR — architecture
 
 A multi-tenant HRM, task-management and geofenced-attendance platform.
-Next.js 15 (App Router) · TypeScript · PostgreSQL · deployed on Railway.
+Next.js 15 (App Router) · TypeScript · PostgreSQL · deployed on Render.
 
-Data access is migrating from Prisma to plain SQL over the `pg` driver. See
-§4 for what is done and what is not.
+Data access is plain SQL over the `pg` driver, through a repository layer.
+There is no ORM.
 
 ---
 
@@ -138,18 +138,17 @@ driver, and the schema is defined by numbered migration files.
 tests that run against a real PostgreSQL instance. Migrations and the seed are
 plain SQL.
 
-Prisma removal is finishing. A handful of call sites outside the repository
-layer still reach for it — chiefly `src/lib/db.ts` and the routes and services
-that have not yet been moved across — so `@prisma/client` remains installed
-until those land. Check the real position rather than trusting this paragraph:
+Prisma is gone: no client, no schema, no generate step, no dependency. Every
+query goes through a repository issuing parameterised SQL. Historical comments
+still mention Prisma where they explain *why* a query is shaped as it is —
+those are deliberate, and describe what was replaced rather than what runs.
+
+Verify rather than trusting this paragraph:
 
 ```
-grep -rl "@prisma/client\|@/lib/db" src        should return nothing
-npm ls prisma                                   should not resolve
+grep -rl "@prisma/client" src tests scripts      should return nothing
+npm ls prisma @prisma/client                     should not resolve
 ```
-
-When both are clean, delete `prisma/`, `src/lib/db.ts` and the two
-dependencies.
 
 ### Migrations
 

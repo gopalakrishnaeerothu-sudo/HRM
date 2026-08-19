@@ -349,6 +349,33 @@ export const teamRepository = {
 // --- Departments ------------------------------------------------------------
 
 export const departmentRepository = {
+
+  /**
+   * Open task load per department.
+   *
+   * One grouped query rather than loading every department, then every active
+   * employee in it, then every task assignment for each. "Open" is any task not
+   * COMPLETED, matching what the dashboard label claims.
+   */
+  async openTaskLoad(scope: TenantScope): Promise<Map<string, number>> {
+    const rows = await query<{ department_id: string; open_tasks: string }>(
+      `SELECT e.department_id, count(*) AS open_tasks
+         FROM task_assignees ta
+         JOIN tasks t     ON t.id = ta.task_id
+         JOIN employees e ON e.id = ta.employee_id
+        WHERE t.organization_id = $1
+          AND t.deleted_at IS NULL
+          AND t.status <> 'COMPLETED'
+          AND e.deleted_at IS NULL
+          AND e.status = 'ACTIVE'
+          AND e.department_id IS NOT NULL
+        GROUP BY e.department_id`,
+      [scope.organizationId],
+      exec(scope),
+    );
+
+    return new Map(rows.map((row) => [row.department_id, toCount(row.open_tasks)]));
+  },
   async list(scope: TenantScope) {
     const rows = await query<{
       id: string;

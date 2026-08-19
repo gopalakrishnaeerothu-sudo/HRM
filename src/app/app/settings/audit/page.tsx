@@ -35,6 +35,24 @@ const ACTION_TONE: Record<AuditAction, "success" | "info" | "critical" | "neutra
   PASSWORD_RESET_COMPLETED: "info",
   ACCOUNT_DISABLED: "critical",
   SESSION_REVOKED: "warning",
+
+  // Access decisions. Every one of these changes who can reach the system at
+  // all, so none of them are "neutral" — someone scanning the log should not
+  // have to read the label to notice that access moved. The asymmetry is
+  // deliberate: granting is routine and reads as "success" or "info",
+  // withdrawing is the row somebody comes looking for months later and reads
+  // as "critical". ROLE_CHANGED sits between the two — not a withdrawal, but
+  // the event that answers "who made them an administrator", so it must not
+  // blend into the ordinary traffic.
+  USER_SIGNUP: "info",
+  USER_INVITED: "info",
+  USER_APPROVED: "success",
+  USER_REJECTED: "warning",
+  ACCOUNT_ENABLED: "success",
+  ACCOUNT_LOCKED: "serious",
+  ACCOUNT_UNLOCKED: "info",
+  ROLE_CHANGED: "serious",
+  ACCESS_REVOKED: "critical",
 };
 
 /**

@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   ListTodo,
   Settings,
+  ShieldCheck,
   Users,
   UsersRound,
   type LucideIcon,
@@ -93,6 +94,12 @@ export const NAV_SECTIONS: NavSection[] = [
       },
       { href: "/app/reports", label: "Reports", icon: BarChart3, permission: "report:read" },
       { href: "/app/notifications", label: "Notifications", icon: Bell },
+      {
+        href: "/app/settings/access",
+        label: "Users & access",
+        icon: ShieldCheck,
+        permission: "user:read",
+      },
       { href: "/app/settings", label: "Settings", icon: Settings, matchPrefix: true },
     ],
   },
@@ -113,9 +120,28 @@ export function primaryNavItems(can: (permission: Permission) => boolean): NavIt
     .slice(0, 5);
 }
 
-/** Whether `pathname` should mark `item` as current. */
-export function isActive(pathname: string, item: NavItem): boolean {
+function matches(pathname: string, item: NavItem): boolean {
   if (item.href === "/app") return pathname === "/app";
   if (item.matchPrefix) return pathname === item.href || pathname.startsWith(`${item.href}/`);
   return pathname === item.href;
+}
+
+/**
+ * Whether `pathname` should mark `item` as current.
+ *
+ * Longest match wins. Without that, a prefix-matching parent stays highlighted
+ * on its own children: `/app/settings` has `matchPrefix`, so on
+ * `/app/settings/access` both it and the more specific "Users & access" item
+ * would claim to be current, and a sidebar with two highlighted rows tells the
+ * reader nothing about where they are.
+ */
+export function isActive(pathname: string, item: NavItem): boolean {
+  if (!matches(pathname, item)) return false;
+
+  return !NAV_SECTIONS.some(
+    (section) =>
+      section.items.some(
+        (other) => other.href.length > item.href.length && matches(pathname, other),
+      ),
+  );
 }

@@ -1,6 +1,5 @@
 import "server-only";
 
-import { prisma } from "@/lib/db";
 import { addDays, eachDay, startOfUtcDay, zonedDateKey } from "@/lib/time";
 import { ratio } from "@/lib/utils";
 import type { AuthSession } from "@/server/auth/types";
@@ -9,7 +8,7 @@ import { attendanceRepository } from "@/server/repositories/attendance-repositor
 import { employeeRepository } from "@/server/repositories/employee-repository";
 import { taskRepository } from "@/server/repositories/task-repository";
 import { officeRepository } from "@/server/repositories/office-repository";
-import { organizationRepository } from "@/server/repositories/org-repository";
+import { departmentRepository, organizationRepository } from "@/server/repositories/org-repository";
 import { attendanceRate } from "@/server/services/attendance-rules";
 import { resolveVisibleEmployeeIds, tenantScopeFor } from "@/server/services/access-service";
 
@@ -91,14 +90,7 @@ export const dashboardService = {
 
     // Utilisation: present staff against the seats their offices are sized for
     // — approximated as active employees assigned to an active office.
-    const assignedToOffices = await prisma.employee.count({
-      where: {
-        organizationId: scope.organizationId,
-        deletedAt: null,
-        status: "ACTIVE",
-        primaryOfficeId: { not: null },
-      },
-    });
+    const assignedToOffices = await employeeRepository.countAssignedToOffice(scope);
 
     return {
       timezone: organization.timezone,
@@ -176,73 +168,19 @@ export const dashboardService = {
     const to = startOfUtcDay(new Date());
     const from = addDays(to, -(days - 1));
 
-    const [created, completed] = await Promise.all([
-      prisma.task.findMany({
-        where: {
-          organizationId: scope.organizationId,
-          deletedAt: null,
-          createdAt: { gte: from },
-        },
-        select: { createdAt: true },
-      }),
-      prisma.task.findMany({
-        where: {
-          organizationId: scope.organizationId,
-          deletedAt: null,
-          completedAt: { gte: from },
-        },
-        select: { completedAt: true },
-      }),
-    ]);
-
-    const byDate = new Map<string, TaskTrendPoint>();
-    for (const day of eachDay(from, to)) {
-      const key = day.toISOString().slice(0, 10);
-      byDate.set(key, { date: key, created: 0, completed: 0 });
-    }
-
-    for (const task of created) {
-      const key = startOfUtcDay(task.createdAt).toISOString().slice(0, 10);
-      const point = byDate.get(key);
-      if (point) point.created += 1;
-    }
-    for (const task of completed) {
-      if (!task.completedAt) continue;
-      const key = startOfUtcDay(task.completedAt).toISOString().slice(0, 10);
-      const point = byDate.get(key);
-      if (point) point.completed += 1;
-    }
-
-    return Array.from(byDate.values());
+    // Grouped in PostgreSQL: this returns one row per day rather than every
+    // task in the window, and generate_series fills quiet days with zeros so
+    // the caller has nothing to reconcile.
+    return taskRepository.trendByDay(scope, from, to);
   },
 
   /** Head-count and open-task load per department. */
   async departmentWorkload(session: AuthSession) {
     const scope = tenantScopeFor(session);
-    const [headcount, departments] = await Promise.all([
+    const [headcount, openTasksByDepartment] = await Promise.all([
       employeeRepository.countByDepartment(scope),
-      prisma.department.findMany({
-        where: { organizationId: scope.organizationId, deletedAt: null },
-        select: {
-          id: true,
-          name: true,
-          color: true,
-          employees: {
-            where: { deletedAt: null, status: "ACTIVE" },
-            select: {
-              _count: { select: { taskAssignments: true } },
-            },
-          },
-        },
-      }),
+      departmentRepository.openTaskLoad(scope),
     ]);
-
-    const openTasksByDepartment = new Map<string, number>(
-      departments.map((department) => [
-        department.id,
-        department.employees.reduce((sum, employee) => sum + employee._count.taskAssignments, 0),
-      ]),
-    );
 
     return headcount.map((row) => ({
       ...row,
@@ -264,23 +202,7 @@ export const dashboardService = {
     const [statuses, workload, members, taskStatuses, overdue] = await Promise.all([
       attendanceRepository.countByStatusForDate(scope, today, teamIds),
       taskRepository.workloadByEmployee(scope, teamIds),
-      prisma.employee.findMany({
-        where: { id: { in: teamIds }, organizationId: scope.organizationId, deletedAt: null },
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          avatarUrl: true,
-          designation: true,
-          status: true,
-          attendanceRecords: {
-            where: { date: today },
-            select: { status: true, checkInAt: true, workedMinutes: true },
-            take: 1,
-          },
-        },
-        orderBy: { firstName: "asc" },
-      }),
+      employeeRepository.listWithAttendanceForDate(scope, teamIds, today),
       taskRepository.countByStatus(scope, envelope),
       taskRepository.countOverdue(scope, envelope),
     ]);
@@ -307,9 +229,9 @@ export const dashboardService = {
         name: `${member.firstName} ${member.lastName}`,
         avatarUrl: member.avatarUrl,
         designation: member.designation,
-        attendanceStatus: member.attendanceRecords[0]?.status ?? null,
-        checkInAt: member.attendanceRecords[0]?.checkInAt ?? null,
-        workedMinutes: member.attendanceRecords[0]?.workedMinutes ?? 0,
+        attendanceStatus: member.attendance?.status ?? null,
+        checkInAt: member.attendance?.checkInAt ?? null,
+        workedMinutes: member.attendance?.workedMinutes ?? 0,
         openTasks: workloadById.get(member.id) ?? 0,
       })),
     };
@@ -364,22 +286,7 @@ export const dashboardService = {
       to,
     });
 
-    const employees = await prisma.employee.findMany({
-      where: {
-        organizationId: scope.organizationId,
-        deletedAt: null,
-        ...(envelope ? { id: { in: [...envelope] } } : {}),
-      },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        avatarUrl: true,
-        designation: true,
-        department: { select: { name: true, color: true } },
-      },
-      orderBy: { firstName: "asc" },
-    });
+    const employees = await employeeRepository.listForReport(scope, envelope);
 
     const byEmployee = new Map<string, { minutes: number; overtime: number; days: number; late: number }>();
     for (const record of records) {

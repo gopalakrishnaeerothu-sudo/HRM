@@ -86,6 +86,15 @@ export const RATE_LIMITS = {
    * rotating IP addresses defeats this limiter but not that one.
    */
   signIn: { limit: 10, windowSeconds: 300 },
+  /**
+   * Self-signup, keyed by client address.
+   *
+   * Tighter than sign-in because each attempt costs an Argon2 hash *and*
+   * writes a row an administrator then has to look at. The threat here is not
+   * credential guessing but queue flooding: filling the pending list with
+   * plausible-looking requests until the real one is missed.
+   */
+  signUp: { limit: 5, windowSeconds: 3600 },
 } as const;
 
 export function rateLimitKey(operation: string, ...parts: Array<string | null | undefined>): string {

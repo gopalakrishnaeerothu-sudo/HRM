@@ -758,6 +758,51 @@ export const taskRepository = {
   },
 
   /** Open task load per employee, for the workload chart. */
+  /**
+   * Tasks created and completed per day over a window.
+   *
+   * Grouped in PostgreSQL. The previous implementation fetched every task row
+   * in the window twice — once for created, once for completed — and counted
+   * them in JavaScript; on a busy tenant that is thousands of rows crossing the
+   * wire to produce at most ninety integers.
+   *
+   * `generate_series` supplies the days, so a date with no activity comes back
+   * as a zero row rather than being missing and needing to be filled in by the
+   * caller.
+   */
+  async trendByDay(
+    scope: TenantScope,
+    from: Date,
+    to: Date,
+  ): Promise<Array<{ date: string; created: number; completed: number }>> {
+    const rows = await query<{ date: string; created: string; completed: string }>(
+      `WITH days AS (
+         SELECT generate_series($2::date, $3::date, '1 day')::date AS day
+       )
+       SELECT to_char(d.day, 'YYYY-MM-DD') AS date,
+              (SELECT count(*) FROM tasks t
+                WHERE t.organization_id = $1
+                  AND t.deleted_at IS NULL
+                  AND t.created_at >= d.day
+                  AND t.created_at < d.day + 1) AS created,
+              (SELECT count(*) FROM tasks t
+                WHERE t.organization_id = $1
+                  AND t.deleted_at IS NULL
+                  AND t.completed_at >= d.day
+                  AND t.completed_at < d.day + 1) AS completed
+         FROM days d
+        ORDER BY d.day ASC`,
+      [scope.organizationId, from, to],
+      exec(scope),
+    );
+
+    return rows.map((row) => ({
+      date: row.date,
+      created: toCount(row.created),
+      completed: toCount(row.completed),
+    }));
+  },
+
   async workloadByEmployee(
     scope: TenantScope,
     visibleToEmployeeIds: readonly string[] | null,
@@ -794,12 +839,12 @@ export const taskRepository = {
   async addComment(
     scope: TenantScope,
     taskId: string,
-    authorId: string,
+    authorId: string | null,
     body: string,
-  ): Promise<string | null> {
+  ): Promise<TaskComment | null> {
     // The SELECT is the tenant check: a task id from another organisation
     // inserts nothing rather than attaching a comment to it.
-    const row = await queryOne<{ id: string }>(
+    const inserted = await queryOne<{ id: string }>(
       `INSERT INTO task_comments (organization_id, task_id, author_id, body)
        SELECT $1, t.id, $3, $4
          FROM tasks t
@@ -809,7 +854,77 @@ export const taskRepository = {
       exec(scope),
     );
 
-    return row?.id ?? null;
+    if (!inserted) return null;
+
+    // Read back with the author joined, so the caller can render the comment
+    // without a second round trip or a client-side lookup of who wrote it.
+    const row = await queryOne<{
+      id: string;
+      body: string;
+      created_at: Date;
+      author_id: string | null;
+      author_first_name: string | null;
+      author_last_name: string | null;
+      author_avatar_url: string | null;
+    }>(
+      `SELECT tc.id, tc.body, tc.created_at,
+              a.id AS author_id, a.first_name AS author_first_name,
+              a.last_name AS author_last_name, a.avatar_url AS author_avatar_url
+         FROM task_comments tc
+         LEFT JOIN employees a ON a.id = tc.author_id
+        WHERE tc.id = $1`,
+      [inserted.id],
+      exec(scope),
+    );
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      body: row.body,
+      createdAt: row.created_at,
+      author: nullableRelation(row.author_id, () => ({
+        id: row.author_id!,
+        firstName: row.author_first_name!,
+        lastName: row.author_last_name!,
+        avatarUrl: row.author_avatar_url,
+      })),
+    };
+  },
+
+  /**
+   * Append a subtask.
+   *
+   * Position is allocated inside the INSERT rather than read first and written
+   * second, so two people adding a subtask at once cannot claim the same slot.
+   */
+  async addSubtask(scope: TenantScope, taskId: string, title: string): Promise<Subtask | null> {
+    const row = await queryOne<{
+      id: string;
+      title: string;
+      is_completed: boolean;
+      completed_at: Date | null;
+      position: number;
+    }>(
+      `INSERT INTO subtasks (task_id, title, position)
+       SELECT t.id, $3,
+              (SELECT COALESCE(MAX(position), -1) + 1 FROM subtasks WHERE task_id = t.id)
+         FROM tasks t
+        WHERE t.id = $2 AND t.organization_id = $1 AND t.deleted_at IS NULL
+       RETURNING id, title, is_completed, completed_at, position`,
+      [scope.organizationId, taskId, title],
+      exec(scope),
+    );
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      title: row.title,
+      isCompleted: row.is_completed,
+      completedAt: row.completed_at,
+      position: row.position,
+    };
   },
 
   async setSubtaskCompletion(
@@ -838,3 +953,30 @@ export const taskRepository = {
  * drift: adding a field to the query adds it here.
  */
 export type TaskDetail = NonNullable<Awaited<ReturnType<typeof taskRepository.findById>>>;
+
+/** One comment with its author resolved. */
+export interface TaskComment {
+  id: string;
+  body: string;
+  createdAt: Date;
+  author: { id: string; firstName: string; lastName: string; avatarUrl: string | null } | null;
+}
+
+/** One checklist item on a task. */
+export interface Subtask {
+  id: string;
+  title: string;
+  isCompleted: boolean;
+  completedAt: Date | null;
+  position: number;
+}
+
+/**
+ * The mutable fields of a task, and one timeline entry.
+ *
+ * Derived from the repository methods rather than declared separately, so a
+ * column added to `update` is immediately available to callers assembling a
+ * patch, and the two cannot drift apart.
+ */
+export type TaskUpdate = Parameters<typeof taskRepository.update>[2];
+export type TaskActivityEntry = Parameters<typeof taskRepository.recordActivity>[1];

@@ -26,7 +26,23 @@ import "server-only";
 
 export type OrganizationPlan = "FREE" | "STARTER" | "GROWTH" | "ENTERPRISE";
 export type UserRole = "OWNER" | "ADMIN" | "HR" | "MANAGER" | "EMPLOYEE";
-export type UserStatus = "ACTIVE" | "INVITED" | "DISABLED";
+/**
+ * Account access state.
+ *
+ * INVITED and PENDING are both "not yet in use" but arrive from opposite
+ * directions: INVITED was created by an administrator and is merely unclaimed,
+ * PENDING was requested by a stranger and needs a decision. Only ACTIVE
+ * resolves a session — enforced in the session lookup, not by callers.
+ *
+ * LOCKED was added by migration 017 and PENDING/REJECTED by 018.
+ */
+export type UserStatus =
+  | "ACTIVE"
+  | "INVITED"
+  | "PENDING"
+  | "DISABLED"
+  | "REJECTED"
+  | "LOCKED";
 export type AuthProvider = "DEV" | "PASSWORD" | "OTP" | "GOOGLE" | "MICROSOFT" | "SSO";
 export type EmployeeStatus = "ACTIVE" | "INACTIVE" | "ON_LEAVE" | "SUSPENDED";
 export type EmploymentType = "FULL_TIME" | "PART_TIME" | "CONTRACT" | "INTERN" | "CONSULTANT";
@@ -115,7 +131,17 @@ export type AuditAction =
   | "PASSWORD_RESET_REQUESTED"
   | "PASSWORD_RESET_COMPLETED"
   | "ACCOUNT_DISABLED"
-  | "SESSION_REVOKED";
+  | "SESSION_REVOKED"
+  // Access decisions — added with user access management, migration 018.
+  | "USER_SIGNUP"
+  | "USER_APPROVED"
+  | "USER_REJECTED"
+  | "USER_INVITED"
+  | "ACCOUNT_ENABLED"
+  | "ACCOUNT_LOCKED"
+  | "ACCOUNT_UNLOCKED"
+  | "ROLE_CHANGED"
+  | "ACCESS_REVOKED";
 
 // ---------------------------------------------------------------------------
 // Shared helpers

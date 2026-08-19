@@ -23,6 +23,7 @@ import {
 import {
   nullableRelation,
   toCount,
+  type AttendanceStatus,
   type EmployeeStatus,
   type EmploymentType,
   type UserRole,
@@ -584,6 +585,139 @@ export const employeeRepository = {
     );
 
     return rows.map((row) => ({ status: row.status, count: toCount(row.count) }));
+  },
+
+  /**
+   * Active employees who have a primary office.
+   *
+   * Counted in PostgreSQL. The dashboard needs one integer, and reading every
+   * matching row back to call `.length` on it costs the whole table for an
+   * answer the database already has.
+   */
+  async countAssignedToOffice(scope: TenantScope): Promise<number> {
+    return count(
+      `SELECT count(*) FROM employees
+        WHERE organization_id = $1
+          AND deleted_at IS NULL
+          AND status = 'ACTIVE'
+          AND primary_office_id IS NOT NULL`,
+      [scope.organizationId],
+      exec(scope),
+    );
+  },
+
+  /**
+   * Employees with their attendance row for one date, for the manager view.
+   *
+   * LEFT JOIN rather than a per-employee lookup: a team of thirty produced
+   * thirty round trips, and the absent case — no row at all — is exactly what
+   * the join's NULLs express.
+   */
+  async listWithAttendanceForDate(
+    scope: TenantScope,
+    employeeIds: readonly string[],
+    date: Date,
+  ): Promise<
+    Array<{
+      id: string;
+      firstName: string;
+      lastName: string;
+      avatarUrl: string | null;
+      designation: string;
+      status: EmployeeStatus;
+      attendance: {
+        status: AttendanceStatus;
+        checkInAt: Date | null;
+        workedMinutes: number;
+      } | null;
+    }>
+  > {
+    const rows = await query<{
+      id: string;
+      first_name: string;
+      last_name: string;
+      avatar_url: string | null;
+      designation: string;
+      status: EmployeeStatus;
+      attendance_status: AttendanceStatus | null;
+      check_in_at: Date | null;
+      worked_minutes: number | null;
+    }>(
+      `SELECT e.id, e.first_name, e.last_name, e.avatar_url, e.designation, e.status,
+              ar.status AS attendance_status, ar.check_in_at, ar.worked_minutes
+         FROM employees e
+         LEFT JOIN attendance_records ar
+           ON ar.employee_id = e.id AND ar.date = $3
+        WHERE e.organization_id = $1
+          AND e.id = ANY($2::uuid[])
+          AND e.deleted_at IS NULL
+        ORDER BY e.first_name ASC`,
+      [scope.organizationId, [...employeeIds], date],
+      exec(scope),
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      avatarUrl: row.avatar_url,
+      designation: row.designation,
+      status: row.status,
+      attendance: row.attendance_status
+        ? {
+            status: row.attendance_status,
+            checkInAt: row.check_in_at,
+            workedMinutes: row.worked_minutes ?? 0,
+          }
+        : null,
+    }));
+  },
+
+  /** Employees with their department, for report grouping. */
+  async listForReport(
+    scope: TenantScope,
+    employeeIds: readonly string[] | null,
+  ): Promise<
+    Array<{
+      id: string;
+      firstName: string;
+      lastName: string;
+      avatarUrl: string | null;
+      designation: string;
+      department: { name: string; color: string } | null;
+    }>
+  > {
+    const rows = await query<{
+      id: string;
+      first_name: string;
+      last_name: string;
+      avatar_url: string | null;
+      designation: string;
+      department_name: string | null;
+      department_color: string | null;
+    }>(
+      `SELECT e.id, e.first_name, e.last_name, e.avatar_url, e.designation,
+              d.name AS department_name, d.color AS department_color
+         FROM employees e
+         LEFT JOIN departments d ON d.id = e.department_id
+        WHERE e.organization_id = $1
+          AND e.deleted_at IS NULL
+          AND ($2::uuid[] IS NULL OR e.id = ANY($2::uuid[]))
+        ORDER BY e.first_name ASC`,
+      [scope.organizationId, employeeIds ? [...employeeIds] : null],
+      exec(scope),
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      avatarUrl: row.avatar_url,
+      designation: row.designation,
+      department: row.department_name
+        ? { name: row.department_name, color: row.department_color! }
+        : null,
+    }));
   },
 
   async countByDepartment(

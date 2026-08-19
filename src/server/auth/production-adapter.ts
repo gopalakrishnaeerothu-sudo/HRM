@@ -28,16 +28,22 @@ import { requestContext } from "@/server/services/audit-service";
 /**
  * Production authentication: email and password, Argon2id, database sessions.
  *
- * ─── Failure is uniform ─────────────────────────────────────────────────────
- * Unknown email, wrong password, disabled account, locked account and deleted
- * organisation all produce the same message and take about the same time.
- * Anything more helpful tells an attacker which addresses hold accounts, which
- * is the first half of the attack.
+ * ─── Failure is uniform until the password is proved ────────────────────────
+ * Unknown email, wrong password, an account that authenticates some other way
+ * and a deleted organisation all produce the same message and take about the
+ * same time. Anything more helpful tells an attacker which addresses hold
+ * accounts, which is the first half of the attack.
  *
- * The one exception is a locked account, which says so — by that point the
- * caller has already proved they know the password is being rejected
- * repeatedly, and leaving them to guess why is a support ticket rather than a
- * security measure.
+ * Account *state* — pending approval, rejected, disabled, not yet activated —
+ * is reported specifically, but only after the correct password has been
+ * supplied. That ordering is what keeps both properties: someone who has
+ * proved they hold the credential learns why they cannot get in, and someone
+ * who has not learns nothing at all. Reporting state before verification would
+ * turn the form into a directory of who works where.
+ *
+ * An unexpired lock is the one state reported without verification, because by
+ * that point the caller has already had repeated attempts rejected and leaving
+ * them to guess why is a support ticket rather than a security measure.
  *
  * ─── Brute-force defence, in two layers ─────────────────────────────────────
  * A per-IP limiter blunts volume but is per-instance and defeated by rotating
@@ -209,16 +215,6 @@ export const productionAuthAdapter: AuthAdapter = {
       throw invalid();
     }
 
-    if (account.status === "DISABLED") {
-      await equaliseTiming();
-      await recordSecurityEvent(account.organization_id, {
-        actorUserId: account.id,
-        action: "LOGIN_FAILURE",
-        summary: "Sign-in refused: account is disabled",
-      });
-      throw invalid();
-    }
-
     if (account.locked_until && account.locked_until > new Date()) {
       await equaliseTiming();
       throw errors.unauthenticated(
@@ -253,6 +249,60 @@ export const productionAuthAdapter: AuthAdapter = {
       });
 
       throw invalid();
+    }
+
+    // ─── The password was correct. Only now is the status revealed ───────────
+    //
+    // These messages are checked *after* verification, not before, and the
+    // ordering is the whole security argument. Answering "your account is
+    // awaiting approval" to anyone who types an address would turn the sign-in
+    // form into a directory: it confirms the address has an account, which
+    // organisation it belongs to, and what state it is in. Answering it only
+    // once the caller has produced the correct password reveals nothing they
+    // did not already know — they hold the credential.
+    //
+    // The wrong-password path above is unchanged and still uniform, so the
+    // enumeration defence that mattered is intact.
+    //
+    // Nothing here says *why* a request was rejected or who disabled an
+    // account; `users.status_reason` is for the administrator's table, and is
+    // deliberately not read on this path.
+    // LOCKED is the exception, and only when the lock has already expired: an
+    // unexpired one was refused further up, and the whole point of a temporary
+    // lock is that a correct password after it elapses clears it and signs the
+    // person in. Treating LOCKED as a flat refusal here would make the lock
+    // permanent and need an administrator to undo it — which is DISABLED, a
+    // state the system is careful to keep distinct.
+    const lockHasExpired =
+      account.status === "LOCKED" && (!account.locked_until || account.locked_until <= new Date());
+
+    if (account.status !== "ACTIVE" && !lockHasExpired) {
+      const refusal: Record<string, string> = {
+        PENDING: "Your account is awaiting administrator approval.",
+        REJECTED: "Your access request was not approved.",
+        DISABLED: "Your account has been disabled.",
+        LOCKED: "Your account is temporarily locked.",
+        INVITED: "Your account hasn't been activated yet.",
+      };
+
+      await recordSecurityEvent(account.organization_id, {
+        actorUserId: account.id,
+        action: "LOGIN_FAILURE",
+        summary: `Sign-in refused: account is ${account.status}`,
+      });
+
+      // Correct password on a non-ACTIVE account still clears the failure
+      // counter. Leaving it to climb would let someone whose approval is
+      // pending lock themselves out by retrying, and then be locked out again
+      // the moment they are approved.
+      await execute(
+        `UPDATE users SET failed_login_attempts = 0 WHERE id = $1`,
+        [account.id],
+      );
+
+      throw errors.forbidden(
+        refusal[account.status] ?? "Your account can't sign in at the moment.",
+      );
     }
 
     // Correct password on a locked-but-expired lock: clearing the counters and

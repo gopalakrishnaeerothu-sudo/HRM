@@ -67,6 +67,16 @@ export default async function LoginPage({
             </p>
 
             <LoginForm redirectTo={redirectTo} />
+
+            <p className="mt-6 border-t border-hairline pt-6 text-center text-sm leading-relaxed text-ink-secondary">
+              Don&rsquo;t have an account?{" "}
+              <Link
+                href="/signup"
+                className="font-medium text-brand underline-offset-4 transition-colors hover:underline"
+              >
+                Request access
+              </Link>
+            </p>
           </CardContent>
         </Card>
 
