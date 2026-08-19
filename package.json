@@ -32,6 +32,7 @@
     "test:sql": "node scripts/create-test-db.mjs && vitest run"
   },
   "dependencies": {
+    "@node-rs/argon2": "^2.1.0",
     "@prisma/client": "^6.3.0",
     "@radix-ui/react-avatar": "^1.1.2",
     "@radix-ui/react-checkbox": "^1.1.3",
