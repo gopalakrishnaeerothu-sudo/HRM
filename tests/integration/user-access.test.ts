@@ -576,7 +576,7 @@ describe.skipIf(!hasTestDatabase)("user access management", () => {
         userAccessService.invite(hrActor, {
           fullName: "Escalation Attempt",
           email: "escalate@acme.test",
-          role: "HR" as UserRole,
+          role: "HR",
         }),
       ).rejects.toThrow(/can't assign/i);
     });
